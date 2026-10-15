@@ -1,0 +1,6 @@
+{
+  "name": "EcoCity",
+  "description": "A community-driven platform for reporting environmental issues, organizing drives, and making a positive impact together.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
