@@ -1,20 +1,21 @@
-import type { Request, Response } from 'express';
+
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 import app from '../server/index';
 import { connectDB } from '../server/config/db';
 
-/**
- * Vercel Serverless Function entry point.
- * This function handles incoming requests to /api and /api/* on Vercel.
- * It ensures the database connection is established (or reused from cache)
- * before passing the request to the Express application.
- */
-export default async function handler(req: Request, res: Response) {
+export default async function handler(
+  req: VercelRequest,
+  res: VercelResponse
+) {
   try {
     await connectDB();
-  } catch (error: any) {
-    console.error('[Serverless Handler] Database initialization warning:', error.message);
-    // Allow request to proceed so non-DB routes like /api/health remain operational
+  } catch (error) {
+    console.error('[Serverless Handler] Database connection failed:', error);
+    return res.status(500).json({
+      status: 'error',
+      message: 'Database connection failed'
+    });
   }
 
-  return app(req, res);
+  return app(req as any, res as any);
 }
