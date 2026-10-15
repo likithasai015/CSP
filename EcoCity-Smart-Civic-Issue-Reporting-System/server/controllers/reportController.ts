@@ -1,8 +1,8 @@
 import { Request, Response, NextFunction } from 'express';
 import mongoose from 'mongoose';
-import Report, { IReport } from '../models/Report';
-import StorageService from '../services/storageService';
-import BrevoService from '../services/brevoService';
+import Report, { IReport } from '../models/Report.js';
+import StorageService from '../services/storageService.js';
+import BrevoService from '../services/brevoService.js';
 
 export class ReportController {
   /**

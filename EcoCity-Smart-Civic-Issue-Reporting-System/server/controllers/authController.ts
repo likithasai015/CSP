@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import Admin from '../models/Admin';
-import { AuthRequest } from '../middleware/auth';
+import Admin from '../models/Admin.js';
+import { AuthRequest } from '../middleware/auth.js';
 
 export class AuthController {
   /**

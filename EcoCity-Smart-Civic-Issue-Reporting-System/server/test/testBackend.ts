@@ -6,10 +6,10 @@ import fs from 'fs';
 import path from 'path';
 import FormData from 'form-data';
 import mongoose from 'mongoose';
-import { connectDB } from '../config/db';
-import Report from '../models/Report';
-import Admin from '../models/Admin';
-import { startServer } from '../index';
+import { connectDB } from '../config/db.js';
+import Report from '../models/Report.js';
+import Admin from '../models/Admin.js';
+import { startServer } from '../index.js';
 
 const BASE_URL = 'http://localhost:5000';
 

@@ -4,12 +4,12 @@ import path from 'path';
 import fs from 'fs';
 import os from 'os';
 import dotenv from 'dotenv';
-import { connectDB } from './config/db';
-import reportRoutes from './routes/reportRoutes';
-import authRoutes from './routes/authRoutes';
-import errorHandler from './middleware/errorHandler';
-import { apiLimiter } from './middleware/rateLimiter';
-import Admin from './models/Admin';
+import { connectDB } from './config/db.js';
+import reportRoutes from './routes/reportRoutes.js';
+import authRoutes from './routes/authRoutes.js';
+import errorHandler from './middleware/errorHandler.js';
+import { apiLimiter } from './middleware/rateLimiter.js';
+import Admin from './models/Admin.js';
 
 // Load environment variables from .env file
 dotenv.config();

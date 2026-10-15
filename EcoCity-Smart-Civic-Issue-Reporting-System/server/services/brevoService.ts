@@ -1,7 +1,7 @@
 import { BrevoClient } from '@getbrevo/brevo';
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { IReport } from '../models/Report';
+import { IReport } from '../models/Report.js';
 
 export interface BrevoSendResult {
   sent: boolean;

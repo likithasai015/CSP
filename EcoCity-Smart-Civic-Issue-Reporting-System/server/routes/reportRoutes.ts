@@ -1,8 +1,8 @@
 import { Router } from 'express';
-import ReportController from '../controllers/reportController';
-import { uploadReportPhoto } from '../middleware/upload';
-import { requireAdmin } from '../middleware/auth';
-import { submissionLimiter } from '../middleware/rateLimiter';
+import ReportController from '../controllers/reportController.js';
+import { uploadReportPhoto } from '../middleware/upload.js';
+import { requireAdmin } from '../middleware/auth.js';
+import { submissionLimiter } from '../middleware/rateLimiter.js';
 
 const router = Router();
 
