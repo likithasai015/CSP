@@ -1,4 +1,3 @@
-
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import app from '../server/index.js';
 import { connectDB } from '../server/config/db.js';
