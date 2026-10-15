@@ -1,6 +1,23 @@
 import axios from 'axios';
 
-const API_URL = ((import.meta as any).env?.VITE_API_URL as string) || 'http://localhost:5000/api/v1';
+/**
+ * Determine the backend API base URL:
+ * 1. If VITE_API_URL is configured (e.g. in separate Vercel deployment), use it (sanitizing trailing slashes).
+ * 2. In browser production on Vercel (unified deployment), default to '/api' on the current domain.
+ * 3. In local development, fallback to 'http://localhost:5000/api'.
+ */
+export const getBaseUrl = (): string => {
+  const envUrl = ((import.meta as any).env?.VITE_API_URL as string)?.trim();
+  if (envUrl) {
+    return envUrl.replace(/\/+$/, '');
+  }
+  if (typeof window !== 'undefined' && (import.meta as any).env?.PROD) {
+    return '/api';
+  }
+  return 'http://localhost:5000/api';
+};
+
+export const API_URL = getBaseUrl();
 
 const api = axios.create({
   baseURL: API_URL,

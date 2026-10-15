@@ -1,13 +1,23 @@
 import multer from 'multer';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import crypto from 'crypto';
 import { Request } from 'express';
 
-// Ensure uploads directory exists
-const uploadDir = path.resolve(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// In serverless environments (e.g. Vercel / AWS Lambda), the filesystem is read-only
+// except for the temporary directory (/tmp). Use os.tmpdir() when deployed.
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+export const uploadDir = isServerless
+  ? path.join(os.tmpdir(), 'ecocity-uploads')
+  : path.resolve(process.cwd(), 'uploads');
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err: any) {
+  console.warn(`[Uploads Directory Warning] Could not create directory ${uploadDir}: ${err.message}`);
 }
 
 // Storage configuration with safe sanitized filenames

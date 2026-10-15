@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
+import os from 'os';
 import dotenv from 'dotenv';
 import { connectDB } from './config/db';
 import reportRoutes from './routes/reportRoutes';
@@ -16,10 +17,31 @@ dotenv.config();
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Ensure upload directory exists
-const uploadDir = path.resolve(process.cwd(), 'uploads');
-if (!fs.existsSync(uploadDir)) {
-  fs.mkdirSync(uploadDir, { recursive: true });
+// Enable reverse proxy trust for Vercel / Cloudflare / AWS Lambda
+app.set('trust proxy', 1);
+
+// Ensure req.socket and remoteAddress exist in serverless environments
+app.use((req: any, _res: any, next: any) => {
+  if (!req.socket) {
+    req.socket = { remoteAddress: '127.0.0.1' };
+  } else if (!req.socket.remoteAddress) {
+    req.socket.remoteAddress = '127.0.0.1';
+  }
+  next();
+});
+
+// Determine safe upload directory based on runtime environment (local vs. Vercel serverless)
+const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const uploadDir = isServerless
+  ? path.join(os.tmpdir(), 'ecocity-uploads')
+  : path.resolve(process.cwd(), 'uploads');
+
+try {
+  if (!fs.existsSync(uploadDir)) {
+    fs.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch {
+  // Ignored in read-only environments
 }
 
 // 1. CORS Configuration
@@ -36,6 +58,8 @@ app.use(
     origin: (origin, callback) => {
       // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
+
+      // Check configured origins and local development
       if (
         allowedOrigins.includes(origin) ||
         origin.startsWith('http://localhost:') ||
@@ -43,7 +67,18 @@ app.use(
       ) {
         return callback(null, true);
       }
-      return callback(new Error(`CORS blocked for origin: ${origin}`));
+
+      // Automatically allow Vercel deployment domains (*.vercel.app)
+      try {
+        const originUrl = new URL(origin);
+        if (originUrl.hostname.endsWith('.vercel.app')) {
+          return callback(null, true);
+        }
+      } catch {
+        // invalid origin url, fallback to standard check
+      }
+
+      return callback(null, false);
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
@@ -58,33 +93,58 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 // Apply general API rate limiter to all /api routes
 app.use('/api', apiLimiter);
 
-// 3. Static Files (Uploaded Photos)
+// 3. Static Files (Uploaded Photos - active for local development)
 app.use('/uploads', express.static(uploadDir));
 
-// 4. API Endpoints
-// Mount report routes at standard /api/reports and compatible aliases
-app.use('/api/reports', reportRoutes);
-app.use('/api/v1/reports', reportRoutes);
-app.use('/api/complaints', reportRoutes);
-app.use('/api/v1/complaints', reportRoutes);
-app.use('/api/admin/complaints', reportRoutes);
-app.use('/api/v1/admin/complaints', reportRoutes);
-
-// Mount authentication routes
-app.use('/api/auth', authRoutes);
-app.use('/api/v1/auth', authRoutes);
-
-// Health check endpoint
-app.get('/api/health', (_req: Request, res: Response) => {
+// 4. Root & Health Check Endpoints
+const healthHandler = (_req: Request, res: Response) => {
   res.status(200).json({
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: process.env.NODE_ENV || 'development'
+    environment: process.env.NODE_ENV || (isServerless ? 'production' : 'development')
+  });
+};
+
+app.get(['/api/health', '/api/v1/health', '/health'], healthHandler);
+
+app.get(['/', '/api'], (_req: Request, res: Response) => {
+  res.status(200).json({
+    name: 'EcoCity Smart Civic Issue Reporting System API',
+    status: 'online',
+    version: '1.0.0',
+    endpoints: {
+      health: '/api/health',
+      reports: '/api/reports',
+      auth: '/api/auth'
+    }
   });
 });
 
-// 5. 404 Handler for undefined API routes
+// 5. API Endpoints
+// Mount report routes across all standard prefixes to prevent path-mismatch 404s
+app.use('/api/reports', reportRoutes);
+app.use('/api/v1/reports', reportRoutes);
+app.use('/reports', reportRoutes);
+app.use('/v1/reports', reportRoutes);
+
+app.use('/api/complaints', reportRoutes);
+app.use('/api/v1/complaints', reportRoutes);
+app.use('/complaints', reportRoutes);
+app.use('/v1/complaints', reportRoutes);
+
+app.use('/api/admin/complaints', reportRoutes);
+app.use('/api/v1/admin/complaints', reportRoutes);
+app.use('/admin/complaints', reportRoutes);
+app.use('/v1/admin/complaints', reportRoutes);
+
+// Mount authentication routes across all prefixes
+app.use('/api/auth', authRoutes);
+app.use('/api/v1/auth', authRoutes);
+app.use('/auth', authRoutes);
+app.use('/v1/auth', authRoutes);
+
+// 6. 404 Handler for undefined API routes
 app.use('/api/*', (req: Request, res: Response) => {
   res.status(404).json({
     success: false,
@@ -92,17 +152,24 @@ app.use('/api/*', (req: Request, res: Response) => {
   });
 });
 
-// 6. Centralized Error Handling Middleware
+// 7. Centralized Error Handling Middleware
 app.use(errorHandler);
 
-// Helper to seed initial admin user if configured
-async function seedInitialAdmin(): Promise<void> {
+// Helper to seed initial admin user (executed at most once per container instance)
+let hasSeededAdmin = false;
+export async function seedInitialAdmin(): Promise<void> {
+  if (hasSeededAdmin) return;
   try {
     const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase() || 'admin@ecocity.com';
     const adminPassword = process.env.ADMIN_PASSWORD?.trim();
 
+    if (!adminPassword) {
+      hasSeededAdmin = true;
+      return;
+    }
+
     const existingAdmin = await Admin.findOne({ email: adminEmail });
-    if (!existingAdmin && adminPassword) {
+    if (!existingAdmin) {
       await Admin.create({
         email: adminEmail,
         name: process.env.ADMIN_NAME || 'EcoCity Administrator',
@@ -111,12 +178,13 @@ async function seedInitialAdmin(): Promise<void> {
       });
       console.log(`[Auth] Initial administrator seeded for: ${adminEmail}`);
     }
+    hasSeededAdmin = true;
   } catch (seedErr: any) {
     console.warn(`[Auth Seed Warning] Could not check or seed admin: ${seedErr.message}`);
   }
 }
 
-// Start Server
+// Start Server for local execution
 export async function startServer() {
   try {
     await connectDB();
@@ -128,7 +196,7 @@ export async function startServer() {
       console.log(`  Port: http://localhost:${PORT}`);
       console.log(`  Health Check: http://localhost:${PORT}/api/health`);
       console.log(`  Reports API:  http://localhost:${PORT}/api/reports`);
-      console.log(`  Brevo Email:  ${process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY (mock/retry mode)'}`);
+      console.log(`  Brevo Email:  ${process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY'}`);
       console.log(`==================================================\n`);
     });
 
@@ -139,7 +207,8 @@ export async function startServer() {
   }
 }
 
-// Auto-start server ONLY when run directly from command line (e.g. `npm run server` or `tsx server/index.ts`)
+// Auto-start server ONLY when run directly from command line (e.g. `npm run server`)
+// Do NOT call app.listen() when executed in a serverless environment (Vercel)
 const isDirectExecution = Boolean(
   process.argv[1] &&
   (process.argv[1].endsWith(path.join('server', 'index.ts')) ||
@@ -148,7 +217,7 @@ const isDirectExecution = Boolean(
    process.argv[1].endsWith('index.js'))
 );
 
-if (isDirectExecution && process.env.NODE_ENV !== 'test') {
+if (isDirectExecution && process.env.NODE_ENV !== 'test' && !isServerless) {
   startServer();
 }
 
