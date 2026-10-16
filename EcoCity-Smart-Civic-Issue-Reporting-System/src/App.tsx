@@ -14,7 +14,7 @@ import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 export default function App() {
   return (
     <AuthProvider>
-      <Router>
+      <Router basename="/CSP">
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Home />} />
