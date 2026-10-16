@@ -7,14 +7,7 @@ import axios from 'axios';
  * 3. In local development, fallback to 'http://localhost:5000/api'.
  */
 export const getBaseUrl = (): string => {
-  const envUrl = ((import.meta as any).env?.VITE_API_URL as string)?.trim();
-  if (envUrl) {
-    return envUrl.replace(/\/+$/, '');
-  }
-  if (typeof window !== 'undefined' && (import.meta as any).env?.PROD) {
-    return '/api';
-  }
-  return 'http://localhost:5000/api';
+  return 'https://vercel.app';
 };
 
 export const API_URL = getBaseUrl();
