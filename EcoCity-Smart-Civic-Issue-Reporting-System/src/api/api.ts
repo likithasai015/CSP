@@ -7,7 +7,13 @@ import axios from 'axios';
  * 3. In local development, fallback to 'http://localhost:5000/api'.
  */
 export const getBaseUrl = (): string => {
-  return 'https://vercel.app';
+  const configuredUrl = import.meta.env.VITE_API_URL?.trim();
+
+  if (configuredUrl) {
+    return configuredUrl.replace(/\/+$/, "");
+  }
+
+  return "http://localhost:5000/api";
 };
 
 export const API_URL = getBaseUrl();
@@ -46,7 +52,8 @@ api.interceptors.response.use(
 
 // 1. Authentication APIs
 export const authAPI = {
-  adminLogin: (data: { email: string; password: string }) => api.post('/auth/login', data),
+  adminLogin: (data: { email: string; password: string }) =>
+  api.post('/admin/login', data),
   triggerGoogleLogin: () => {
     window.location.href = `${API_URL}/auth/google?prompt=select_account`;
   },

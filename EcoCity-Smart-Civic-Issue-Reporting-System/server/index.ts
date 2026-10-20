@@ -1,18 +1,17 @@
+import "dotenv/config";
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import dotenv from 'dotenv';
 import { connectDB } from './config/db.js';
 import reportRoutes from './routes/reportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import Admin from './models/Admin.js';
+import adminAuthRouter from "./adminAuth";
 
-// Load environment variables from .env file
-dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -92,6 +91,7 @@ app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
 // Apply general API rate limiter to all /api routes
 app.use('/api', apiLimiter);
+app.use("/api/admin", adminAuthRouter);
 
 // 3. Static Files (Uploaded Photos - active for local development)
 app.use('/uploads', express.static(uploadDir));
