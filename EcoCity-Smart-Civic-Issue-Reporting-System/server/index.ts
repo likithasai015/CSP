@@ -1,5 +1,5 @@
 import "dotenv/config";
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
@@ -147,6 +147,11 @@ app.get(['/', '/api'], (_req: Request, res: Response) => {
       auth: '/api/auth'
     }
   });
+});
+
+// Fallback: If a POST request hits '/' or '/api' directly (due to reverse proxy or Vercel rewrite)
+app.post(['/', '/api'], (req: Request, res: Response, next: NextFunction) => {
+  reportRoutes(req, res, next);
 });
 
 // 5. API Endpoints

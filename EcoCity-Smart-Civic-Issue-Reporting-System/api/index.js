@@ -1570,6 +1570,9 @@ app.get(["/", "/api"], (_req, res) => {
     }
   });
 });
+app.post(["/", "/api"], (req, res, next) => {
+  reportRoutes_default(req, res, next);
+});
 app.use("/api/reports", reportRoutes_default);
 app.use("/api/v1/reports", reportRoutes_default);
 app.use("/reports", reportRoutes_default);
@@ -1626,6 +1629,10 @@ var server_default = app;
 
 // serverless/index.ts
 async function handler(req, res) {
+  const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"];
+  if (matchedPath && (req.url === "/api" || req.url === "/" || req.url?.startsWith("/api?"))) {
+    req.url = matchedPath;
+  }
   return server_default(req, res);
 }
 export {
