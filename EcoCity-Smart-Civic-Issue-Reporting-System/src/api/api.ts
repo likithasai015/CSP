@@ -13,6 +13,10 @@ export const getBaseUrl = (): string => {
     return configuredUrl.replace(/\/+$/, "");
   }
 
+  if (typeof window !== "undefined" && import.meta.env.PROD) {
+    return "/api";
+  }
+
   return "http://localhost:5000/api";
 };
 

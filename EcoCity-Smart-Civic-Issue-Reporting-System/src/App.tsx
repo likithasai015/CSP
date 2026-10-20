@@ -13,9 +13,17 @@ import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 
 export default function App() {
+  // Determine router basename dynamically:
+  // - When loaded under GitHub Pages prefix (/CSP), use '/CSP'
+  // - When loaded on Vercel, custom domain, or local dev, use '/'
+  const basename =
+    typeof window !== "undefined" && window.location.pathname.startsWith("/CSP")
+      ? "/CSP"
+      : "/";
+
   return (
     <AuthProvider>
-      <Router basename="/CSP">
+      <Router basename={basename}>
         <Routes>
           <Route element={<Layout />}>
             <Route path="/" element={<Home />} />
@@ -35,10 +43,13 @@ export default function App() {
               <Route path="/admin" element={<AdminDashboard />} />
             </Route>
           </Route>
-          {/* Auth page without Navbar/Footer */}
+
+          {/* Auth pages without Navbar/Footer */}
           <Route path="/auth" element={<Auth />} />
           <Route path="/admin-login" element={<AdminLogin />} />
           <Route path="/admin/login" element={<Navigate to="/admin-login" replace />} />
+
+          {/* Catch-all fallback */}
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
