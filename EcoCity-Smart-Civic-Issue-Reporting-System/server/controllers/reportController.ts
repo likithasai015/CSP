@@ -1,12 +1,11 @@
 import { Request, Response, NextFunction } from 'express';
-import mongoose from 'mongoose';
-import Report, { IReport } from '../models/Report.js';
 import StorageService from '../services/storageService.js';
 import BrevoService from '../services/brevoService.js';
+import mockDataService, { IReportData } from '../services/mockDataService.js';
 
 export class ReportController {
   /**
-   * Submit a new garbage complaint
+   * Submit a new civic issue report
    * POST /api/reports
    */
   public static async submitReport(
@@ -27,7 +26,7 @@ export class ReportController {
         contact
       } = req.body;
 
-      // 1. Validate required fields (Email, Location, and Photo are required)
+      // 1. Validate required fields
       const citizenName =
         name && typeof name === 'string' && name.trim() !== ''
           ? name.trim()
@@ -62,7 +61,7 @@ export class ReportController {
       if (!req.file) {
         res.status(400).json({
           success: false,
-          message: 'A photo of the garbage issue is required'
+          message: 'A photo of the civic issue is required'
         });
         return;
       }
@@ -85,26 +84,36 @@ export class ReportController {
         }
       }
 
-      // 4. Upload photo via StorageService (Cloudinary or local static storage)
+      // 4. Process photo via StorageService
       const uploadResult = await StorageService.processUploadedFile(
         req.file,
         req.get('host'),
         req.protocol
       );
 
-      // 5. Generate unique human-readable complaint ID
-      const timestamp = Date.now().toString().slice(-6);
-      const randomNum = Math.floor(1000 + Math.random() * 9000);
-      const complaintId = `ECO-${timestamp}-${randomNum}`;
-
-      // 6. Persist complaint in MongoDB
+      // 5. Categorize and assign department
       const reportCategory = (category && category.trim()) || 'Garbage';
+      const getDepartmentByCategory = (cat: string): string => {
+        switch (cat) {
+          case 'Garbage': return 'Sanitation Department';
+          case 'Potholes': return 'Public Works Department';
+          case 'Broken Streetlights': return 'Electrical Department';
+          case 'Water Leakage': return 'Water Department';
+          case 'Drainage': return 'Sewer Department';
+          case 'Stray Animal Issues': return 'Animal Control Department';
+          case 'Illegal Tree Cutting': return 'Parks & Forestry Department';
+          case 'Pollution': return 'Environmental Protection Department';
+          default: return 'General Municipal Administration';
+        }
+      };
+
+      const department = getDepartmentByCategory(reportCategory);
       const reportTitle =
         (title && title.trim()) ||
-        `Garbage Issue at ${locationName.trim()}`;
+        `${reportCategory} Issue at ${locationName.trim()}`;
 
-      const newReport: IReport = new Report({
-        complaintId,
+      // 6. Create report in centralized in-memory mock-data service
+      const savedReport = mockDataService.createReport({
         name: citizenName,
         email: email.trim().toLowerCase(),
         locationName: locationName.trim(),
@@ -113,37 +122,38 @@ export class ReportController {
         description: description ? description.trim() : '',
         title: reportTitle,
         category: reportCategory,
+        department,
+        assignedDepartment: department,
         contact: contact ? contact.trim() : undefined,
         photoUrl: uploadResult.url,
         photoPublicId: uploadResult.publicId,
         status: 'Pending',
-        department: 'Sanitation Department',
-        emailNotification: {
-          sent: false,
-          attemptedAt: new Date()
-        }
+        priority: 'Medium'
       });
 
-      const savedReport = await newReport.save();
-      console.log(`[Complaint Saved] ID: ${savedReport.complaintId} (_id: ${savedReport._id})`);
+      console.log(`[Report Created] ID: ${savedReport.complaintId} (Mock ID: ${savedReport._id})`);
 
-      // 7. Dispatch email notification to ADMIN_EMAIL via Brevo
-      // The complaint is already saved, so failure here will NOT lose the complaint
+      // 7. Dispatch transactional email through Brevo to likithamindi024@gmail.com
       const brevoResult = await BrevoService.sendComplaintNotification(savedReport);
 
-      // Update complaint record with Brevo result
+      // Update emailNotification state in mock data store
+      mockDataService.updateEmailNotification(savedReport._id, {
+        sent: brevoResult.sent,
+        messageId: brevoResult.messageId,
+        error: brevoResult.error,
+        attemptedAt: new Date()
+      });
       savedReport.emailNotification = {
         sent: brevoResult.sent,
         messageId: brevoResult.messageId,
         error: brevoResult.error,
         attemptedAt: new Date()
       };
-      await savedReport.save();
 
       // 8. Return response
       const statusMessage = brevoResult.sent
-        ? 'Garbage complaint submitted and notification email dispatched to administrator'
-        : 'Garbage complaint saved, but email notification could not be delivered';
+        ? 'Civic issue report submitted and email notification accepted by Brevo for delivery to administrator'
+        : `Civic issue report recorded in EcoCity system, but Brevo email delivery could not be initiated: ${brevoResult.error}`;
 
       res.status(201).json({
         success: true,
@@ -161,7 +171,7 @@ export class ReportController {
   }
 
   /**
-   * Retrieve complaints for an authorized administrator
+   * Retrieve civic reports for an authorized administrator
    * GET /api/reports
    */
   public static async getAllReports(
@@ -179,47 +189,26 @@ export class ReportController {
         sort = 'latest'
       } = req.query;
 
-      const query: any = {};
-
-      if (status && status !== 'All') {
-        query.status = status;
-      }
-
-      if (category && category !== 'All') {
-        query.category = category;
-      }
-
-      if (search && typeof search === 'string' && search.trim() !== '') {
-        const searchRegex = new RegExp(search.trim(), 'i');
-        query.$or = [
-          { complaintId: searchRegex },
-          { name: searchRegex },
-          { email: searchRegex },
-          { locationName: searchRegex },
-          { description: searchRegex },
-          { title: searchRegex }
-        ];
-      }
-
       const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
       const limitNum = Math.max(1, Math.min(100, parseInt(limit as string, 10) || 20));
-      const skip = (pageNum - 1) * limitNum;
 
-      const sortOption: any = sort === 'oldest' ? { createdAt: 1 } : { createdAt: -1 };
-
-      const [reports, total] = await Promise.all([
-        Report.find(query).sort(sortOption).skip(skip).limit(limitNum),
-        Report.countDocuments(query)
-      ]);
+      const result = mockDataService.getAllReports({
+        status: status as string,
+        category: category as string,
+        search: search as string,
+        page: pageNum,
+        limit: limitNum,
+        sort: sort as string
+      });
 
       res.status(200).json({
         success: true,
-        data: reports,
+        data: result.reports,
         pagination: {
-          total,
-          page: pageNum,
-          limit: limitNum,
-          pages: Math.ceil(total / limitNum)
+          total: result.total,
+          page: result.page,
+          limit: result.limit,
+          pages: result.pages
         }
       });
     } catch (error: any) {
@@ -228,7 +217,7 @@ export class ReportController {
   }
 
   /**
-   * Public endpoint to get recent reports (sanitized, citizen email/contact omitted)
+   * Public endpoint to get recent reports (sanitized citizen details)
    * GET /api/reports/public/recent
    */
   public static async getPublicRecentReports(
@@ -237,11 +226,7 @@ export class ReportController {
     next: NextFunction
   ): Promise<void> {
     try {
-      const reports = await Report.find()
-        .sort({ createdAt: -1 })
-        .limit(10)
-        .select('-email -contact');
-
+      const reports = mockDataService.getPublicRecentReports(10);
       res.status(200).json({
         success: true,
         data: reports
@@ -252,7 +237,7 @@ export class ReportController {
   }
 
   /**
-   * Retrieve a specific complaint by ID
+   * Retrieve a specific report by ID or Complaint ID
    * GET /api/reports/:id
    */
   public static async getReportById(
@@ -262,21 +247,12 @@ export class ReportController {
   ): Promise<void> {
     try {
       const { id } = req.params;
-
-      let report: IReport | null = null;
-
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        report = await Report.findById(id);
-      }
-
-      if (!report) {
-        report = await Report.findOne({ complaintId: id });
-      }
+      const report = mockDataService.getReportById(id);
 
       if (!report) {
         res.status(404).json({
           success: false,
-          message: `Complaint not found with ID ${id}`
+          message: `Civic issue report not found with ID ${id}`
         });
         return;
       }
@@ -291,7 +267,7 @@ export class ReportController {
   }
 
   /**
-   * Update a complaint's status (Administrator only)
+   * Update a report's status (Administrator only)
    * PATCH /api/reports/:id/status
    */
   public static async updateReportStatus(
@@ -301,7 +277,7 @@ export class ReportController {
   ): Promise<void> {
     try {
       const { id } = req.params;
-      const { status, notes, assignedDepartment, priority } = req.body;
+      const { status, notes, assignedDepartment, priority, resolutionImage } = req.body;
 
       const allowedStatuses = ['Pending', 'In Progress', 'Resolved', 'Rejected'];
       if (!status || !allowedStatuses.includes(status)) {
@@ -312,34 +288,25 @@ export class ReportController {
         return;
       }
 
-      let report: IReport | null = null;
+      const updatedReport = mockDataService.updateReportStatus(id, {
+        status,
+        notes,
+        assignedDepartment,
+        priority,
+        resolutionImage
+      });
 
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        report = await Report.findById(id);
-      }
-
-      if (!report) {
-        report = await Report.findOne({ complaintId: id });
-      }
-
-      if (!report) {
+      if (!updatedReport) {
         res.status(404).json({
           success: false,
-          message: `Complaint not found with ID ${id}`
+          message: `Civic issue report not found with ID ${id}`
         });
         return;
       }
 
-      report.status = status;
-      if (notes) report.resolutionNotes = notes;
-      if (assignedDepartment) report.assignedDepartment = assignedDepartment;
-      if (priority) report.priority = priority;
-
-      const updatedReport = await report.save();
-
       res.status(200).json({
         success: true,
-        message: `Complaint status successfully updated to ${status}`,
+        message: `Report status successfully updated to ${status}`,
         data: updatedReport
       });
     } catch (error: any) {
@@ -348,7 +315,7 @@ export class ReportController {
   }
 
   /**
-   * Resend email notification for a complaint (Admin only)
+   * Resend Brevo email notification for a report (Admin only)
    * POST /api/reports/:id/resend-email
    */
   public static async resendNotification(
@@ -358,31 +325,29 @@ export class ReportController {
   ): Promise<void> {
     try {
       const { id } = req.params;
-
-      let report: IReport | null = null;
-      if (mongoose.Types.ObjectId.isValid(id)) {
-        report = await Report.findById(id);
-      }
-      if (!report) {
-        report = await Report.findOne({ complaintId: id });
-      }
+      const report = mockDataService.getReportById(id);
 
       if (!report) {
         res.status(404).json({
           success: false,
-          message: `Complaint not found with ID ${id}`
+          message: `Civic issue report not found with ID ${id}`
         });
         return;
       }
 
       const brevoResult = await BrevoService.sendComplaintNotification(report);
+      mockDataService.updateEmailNotification(report._id, {
+        sent: brevoResult.sent,
+        messageId: brevoResult.messageId,
+        error: brevoResult.error,
+        attemptedAt: new Date()
+      });
       report.emailNotification = {
         sent: brevoResult.sent,
         messageId: brevoResult.messageId,
         error: brevoResult.error,
         attemptedAt: new Date()
       };
-      await report.save();
 
       res.status(200).json({
         success: true,
@@ -394,6 +359,21 @@ export class ReportController {
     } catch (error: any) {
       next(error);
     }
+  }
+
+  /**
+   * Summary stats endpoint (convenience for admin dashboard)
+   * GET /api/reports/stats
+   */
+  public static async getStats(
+    _req: Request,
+    res: Response
+  ): Promise<void> {
+    const stats = mockDataService.getStats();
+    res.status(200).json({
+      success: true,
+      data: stats
+    });
   }
 }
 

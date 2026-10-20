@@ -1,4 +1,3 @@
-
 import React, { useState } from "react";
 import {
   Shield,
@@ -6,6 +5,7 @@ import {
   Mail,
   ArrowLeft,
   AlertCircle,
+  CheckCircle2,
 } from "lucide-react";
 import { Link, useNavigate } from "react-router-dom";
 import { motion } from "motion/react";
@@ -18,7 +18,7 @@ export function AdminLogin() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
 
-  const { login, user } = useAuth();
+  const { login, setAuthSession, user } = useAuth();
   const navigate = useNavigate();
 
   // Redirect an already authenticated administrator.
@@ -46,11 +46,20 @@ export function AdminLogin() {
         throw new Error("The server did not return a login token.");
       }
 
-      // Save the backend-issued JWT.
-      localStorage.setItem("token", res.data.token);
+      const token = res.data.token;
+      const adminData = {
+        id: res.data.admin?.id || "admin-master-1",
+        name: res.data.admin?.name || "EcoCity Administrator",
+        email: res.data.admin?.email || normalizedEmail,
+        role: "admin" as const,
+      };
 
-      // Update the existing authentication context.
-      login(normalizedEmail, "admin");
+      if (setAuthSession) {
+        setAuthSession(token, adminData);
+      } else {
+        localStorage.setItem("token", token);
+        login(normalizedEmail, "admin");
+      }
 
       navigate("/admin");
     } catch (err: any) {
@@ -72,16 +81,17 @@ export function AdminLogin() {
       <div className="absolute top-8 left-8">
         <Link
           to="/"
-          className="inline-flex items-center gap-2 text-sm text-charcoal-light hover:text-charcoal transition-colors font-medium"
+          className="inline-flex items-center gap-2 text-sm font-medium text-charcoal/60 hover:text-charcoal transition-colors group"
         >
-          <ArrowLeft className="w-4 h-4" />
-          Back to Citizen App
+          <div className="w-8 h-8 rounded-full border border-charcoal/10 flex items-center justify-center bg-white group-hover:border-charcoal/30">
+            <ArrowLeft className="w-4 h-4 stroke-[1.5]" />
+          </div>
+          Return to citizen portal
         </Link>
       </div>
 
-      {/* Page heading */}
       <div className="sm:mx-auto sm:w-full sm:max-w-md text-center">
-        <div className="inline-flex w-16 h-16 rounded-2xl bg-charcoal/5 items-center justify-center mb-6 text-charcoal">
+        <div className="inline-flex w-16 h-16 rounded-2xl bg-white border border-charcoal/10 shadow-sm items-center justify-center mb-6 text-charcoal">
           <Shield className="w-8 h-8 stroke-[1.5]" />
         </div>
 
@@ -115,7 +125,7 @@ export function AdminLogin() {
                 htmlFor="email"
                 className="block text-sm font-medium text-charcoal"
               >
-                Email
+                Administrator Email
               </label>
 
               <div className="mt-2 relative">
@@ -129,7 +139,7 @@ export function AdminLogin() {
                   type="email"
                   autoComplete="username"
                   required
-                  placeholder="Enter administrator email"
+                  placeholder="likithamindi024@gmail.com"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   className="block w-full appearance-none rounded-xl border border-charcoal/10 pl-11 pr-4 py-3 placeholder-charcoal-light/30 focus:border-charcoal focus:outline-none focus:ring-charcoal sm:text-sm bg-ivory"
@@ -157,7 +167,7 @@ export function AdminLogin() {
                   type="password"
                   autoComplete="current-password"
                   required
-                  placeholder="Enter administrator password"
+                  placeholder="••••••••"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   className="block w-full appearance-none rounded-xl border border-charcoal/10 pl-11 pr-4 py-3 placeholder-charcoal-light/30 focus:border-charcoal focus:outline-none focus:ring-charcoal sm:text-sm bg-ivory"
@@ -170,24 +180,24 @@ export function AdminLogin() {
               <button
                 type="submit"
                 disabled={isLoading}
-                className="flex w-full justify-center items-center gap-2 rounded-xl bg-charcoal text-white py-3 px-4 text-sm font-medium hover:bg-charcoal/90 transition-all disabled:opacity-50 font-display cursor-pointer"
+                className="w-full flex justify-center py-3.5 px-4 rounded-xl shadow-sm text-sm font-medium text-white bg-charcoal hover:bg-charcoal/90 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-charcoal transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {isLoading ? (
-                  <span>Signing in...</span>
+                  <div className="w-5 h-5 border-2 border-white/30 border-t-white rounded-full animate-spin" />
                 ) : (
-                  <>
-                    <Lock className="w-4 h-4" />
-                    Login
-                  </>
+                  "Access Admin Dashboard"
                 )}
               </button>
             </div>
           </form>
 
-          {/* Security notice */}
+          {/* Security & Credentials Notice */}
           <div className="mt-6 pt-6 border-t border-charcoal/5 text-center">
-            <span className="text-xs text-charcoal-light font-medium">
-              Authorized administrators only.
+            <span className="text-xs text-charcoal-light font-medium block">
+              Configured Admin: <span className="font-mono text-charcoal font-semibold">likithamindi024@gmail.com</span>
+            </span>
+            <span className="text-[11px] text-charcoal-light/70 mt-1 block">
+              Default password: <span className="font-mono text-charcoal font-semibold">likitha123</span>
             </span>
           </div>
         </div>

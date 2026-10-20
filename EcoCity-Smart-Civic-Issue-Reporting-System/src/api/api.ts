@@ -52,8 +52,16 @@ api.interceptors.response.use(
 
 // 1. Authentication APIs
 export const authAPI = {
-  adminLogin: (data: { email: string; password: string }) =>
-  api.post('/admin/login', data),
+  adminLogin: async (data: { email: string; password: string }) => {
+    try {
+      return await api.post('/admin/login', data);
+    } catch (err: any) {
+      if (err.response?.status === 404) {
+        return await api.post('/auth/login', data);
+      }
+      throw err;
+    }
+  },
   triggerGoogleLogin: () => {
     window.location.href = `${API_URL}/auth/google?prompt=select_account`;
   },

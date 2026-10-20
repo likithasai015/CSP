@@ -1,28 +1,15 @@
-
 import { Router, Request, Response, NextFunction } from "express";
-import bcrypt from "bcryptjs";
 import jwt from "jsonwebtoken";
+import mockDataService from "./services/mockDataService.js";
 
 const router = Router();
 
-const ADMIN_EMAIL = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-const ADMIN_PASSWORD_HASH = process.env.ADMIN_PASSWORD_HASH;
-const JWT_SECRET = process.env.JWT_SECRET;
-
-console.log("Admin auth config:", {
-  emailLoaded: Boolean(ADMIN_EMAIL),
-  passwordHashLoaded: Boolean(ADMIN_PASSWORD_HASH),
-  jwtSecretLoaded: Boolean(JWT_SECRET),
-});
+const getJwtSecret = (): string => {
+  return process.env.JWT_SECRET || "ecocity-default-jwt-secret-key-change-in-production";
+};
 
 router.post("/login", async (req: Request, res: Response) => {
   try {
-    if (!ADMIN_EMAIL || !ADMIN_PASSWORD_HASH || !JWT_SECRET) {
-      return res.status(500).json({
-        message: "Admin authentication is not configured",
-      });
-    }
-
     const email =
       typeof req.body?.email === "string"
         ? req.body.email.trim().toLowerCase()
@@ -33,32 +20,48 @@ router.post("/login", async (req: Request, res: Response) => {
         ? req.body.password
         : "";
 
-    const emailMatches = email === ADMIN_EMAIL;
-    const passwordMatches = await bcrypt.compare(
-      password,
-      ADMIN_PASSWORD_HASH
-    );
-
-    if (!emailMatches || !passwordMatches) {
-      return res.status(401).json({
-        message: "Invalid email or password",
+    if (!email || !password) {
+      return res.status(400).json({
+        success: false,
+        message: "Both email and password are required",
       });
     }
 
+    const admin = mockDataService.validateAdminCredentials(email, password);
+
+    if (!admin) {
+      return res.status(401).json({
+        success: false,
+        message: "Invalid administrator email or password",
+      });
+    }
+
+    const secret = getJwtSecret();
     const token = jwt.sign(
-      { role: "admin", email: ADMIN_EMAIL },
-      JWT_SECRET,
-      { expiresIn: "8h" }
+      {
+        id: admin.id,
+        role: "admin",
+        email: admin.email,
+      },
+      secret,
+      { expiresIn: "7d" }
     );
 
     return res.json({
+      success: true,
       message: "Login successful",
       token,
-      admin: { email: ADMIN_EMAIL },
+      admin: {
+        id: admin.id,
+        name: admin.name,
+        email: admin.email,
+        role: admin.role,
+      },
     });
-  } catch (error) {
+  } catch (error: any) {
     console.error("Admin login failed:", error);
     return res.status(500).json({
+      success: false,
       message: "Unable to log in",
     });
   }
@@ -74,25 +77,27 @@ export function requireAdmin(
     ? authorization.slice(7)
     : "";
 
-  if (!token || !process.env.JWT_SECRET) {
-    return res.status(401).json({ message: "Admin login required" });
+  if (!token) {
+    return res.status(401).json({ success: false, message: "Admin login required" });
   }
 
   try {
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const secret = getJwtSecret();
+    const decoded: any = jwt.verify(token, secret);
 
     if (
+      !decoded ||
       typeof decoded === "string" ||
-      decoded.role !== "admin" ||
-      decoded.email !==
-        process.env.ADMIN_EMAIL?.trim().toLowerCase()
+      decoded.role !== "admin"
     ) {
-      return res.status(403).json({ message: "Admin access denied" });
+      return res.status(403).json({ success: false, message: "Admin access denied" });
     }
 
+    (req as any).user = decoded;
     next();
   } catch {
     return res.status(401).json({
+      success: false,
       message: "Invalid or expired login token",
     });
   }

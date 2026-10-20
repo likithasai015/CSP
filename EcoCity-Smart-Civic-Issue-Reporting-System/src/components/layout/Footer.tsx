@@ -22,13 +22,26 @@ export function Footer() {
           <div>
             <h4 className="font-display font-medium text-charcoal mb-4">Platform</h4>
             <ul className="space-y-3">
-              {["Report an Issue", "Community Events", "Admin Dashboard"].map((item) => (
-                <li key={item}>
-                  <a href="#" className="text-sm text-charcoal-light hover:text-teal transition-colors">
-                    {item}
-                  </a>
-                </li>
-              ))}
+              <li>
+                <Link to="/report" className="text-sm text-charcoal-light hover:text-teal transition-colors">
+                  Report an Issue
+                </Link>
+              </li>
+              <li>
+                <Link to="/events" className="text-sm text-charcoal-light hover:text-teal transition-colors">
+                  Community Events
+                </Link>
+              </li>
+              <li>
+                <Link to="/about" className="text-sm text-charcoal-light hover:text-teal transition-colors">
+                  About Platform
+                </Link>
+              </li>
+              <li>
+                <Link to="/admin-login" className="text-sm text-charcoal-light hover:text-teal transition-colors">
+                  Admin Console
+                </Link>
+              </li>
             </ul>
           </div>
           <div>

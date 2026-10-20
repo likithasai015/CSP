@@ -2,7 +2,7 @@ import {
   XCircle, BarChart3, AlertTriangle, Eye, Search, Download, 
   Trash2, Clock, User, MapPin, Calendar, ArrowUpDown, CheckCircle2, 
   Building2, LogOut, Filter, ChevronLeft, ChevronRight, FileSpreadsheet,
-  Plus, Edit3, Users, X, Sparkles, Check, ShieldCheck
+  Plus, Edit3, Users, X, Sparkles, Check, ShieldCheck, RefreshCw
 } from "lucide-react";
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
@@ -111,53 +111,54 @@ export function AdminDashboard() {
     return DEFAULT_REPORTS;
   });
 
-  // Fetch live reports from backend
-  React.useEffect(() => {
-    const fetchAdminReports = async () => {
-      try {
-        const res = await complaintAPI.adminGetAllComplaints();
-        if (res.data?.success && Array.isArray(res.data.data) && res.data.data.length > 0) {
-          const backendReports: UnifiedReport[] = res.data.data.map((r: any) => ({
-            id: r._id || r.id,
-            complaintId: r.complaintId,
-            title: r.title || `Issue at ${r.locationName}`,
-            category: r.category || "Garbage",
-            status: r.status || "Pending",
-            location: r.locationName || r.location,
-            date: r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
-              month: "short",
-              day: "numeric",
-              year: "numeric",
-              hour: "2-digit",
-              minute: "2-digit"
-            }) : "Recent",
-            user: r.name || "Citizen",
-            userEmail: r.email,
-            description: r.description || "",
-            contact: r.contact,
-            img: r.photoUrl || r.img || garbageOverflowImg,
-            afterImg: r.resolutionImage,
-            department: r.department || r.assignedDepartment || "Sanitation Department",
-            latitude: r.latitude,
-            longitude: r.longitude,
-            emailNotification: r.emailNotification
-          }));
+  // State for live refresh
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
-          setReports((prev) => {
-            const existingIds = new Set(backendReports.map(b => String(b.id)));
-            const nonDuplicates = prev.filter(p => !existingIds.has(String(p.id)));
-            const merged = [...backendReports, ...nonDuplicates];
-            localStorage.setItem("ecocity_reports", JSON.stringify(merged));
-            return merged;
-          });
-        }
-      } catch (err: any) {
-        console.warn("Could not fetch reports from backend, using cached reports:", err.message);
+  // Fetch live reports from backend mock-data service
+  const fetchAdminReports = React.useCallback(async () => {
+    setIsRefreshing(true);
+    try {
+      const res = await complaintAPI.adminGetAllComplaints();
+      if (res.data?.success && Array.isArray(res.data.data)) {
+        const backendReports: UnifiedReport[] = res.data.data.map((r: any) => ({
+          id: r._id || r.id,
+          complaintId: r.complaintId,
+          title: r.title || `Issue at ${r.locationName || r.location}`,
+          category: r.category || "Garbage",
+          status: r.status || "Pending",
+          location: r.locationName || r.location || "City Location",
+          date: r.createdAt ? new Date(r.createdAt).toLocaleString("en-US", {
+            month: "short",
+            day: "numeric",
+            year: "numeric",
+            hour: "2-digit",
+            minute: "2-digit"
+          }) : "Recent",
+          user: r.name || r.user || "Citizen",
+          userEmail: r.email || r.userEmail,
+          description: r.description || "",
+          contact: r.contact,
+          img: r.photoUrl || r.img || garbageOverflowImg,
+          afterImg: r.resolutionImage,
+          department: r.department || r.assignedDepartment || "Sanitation Department",
+          latitude: r.latitude,
+          longitude: r.longitude,
+          emailNotification: r.emailNotification
+        }));
+
+        setReports(backendReports);
+        localStorage.setItem("ecocity_reports", JSON.stringify(backendReports));
       }
-    };
-
-    fetchAdminReports();
+    } catch (err: any) {
+      console.warn("Could not fetch reports from backend, using cached reports:", err.message);
+    } finally {
+      setIsRefreshing(false);
+    }
   }, []);
+
+  React.useEffect(() => {
+    fetchAdminReports();
+  }, [fetchAdminReports]);
 
   const handleUpdateStatus = async (id: number | string, newStatus: "Pending" | "In Progress" | "Resolved") => {
     const updated = reports.map(r => r.id === id ? { ...r, status: newStatus } : r);
@@ -585,17 +586,20 @@ export function AdminDashboard() {
           {/* TAB 1: MANAGE COMPLAINTS */}
           {activeTab === 'reports' && (
             <>
-              {/* Simulation Banner */}
-              <div className="bg-amber-50 border border-amber-100 rounded-2xl p-4 flex gap-3 items-start shadow-xs">
-                <div className="p-1 bg-amber-100 rounded-lg text-amber-700 flex-shrink-0">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
+              {/* In-Memory Mock Mode Banner */}
+              <div className="bg-teal/5 border border-teal/10 rounded-2xl p-4 flex gap-3 items-start shadow-xs">
+                <div className="p-1 bg-teal/10 rounded-lg text-teal flex-shrink-0">
+                  <ShieldCheck className="w-4 h-4" />
                 </div>
-                <div>
-                  <h4 className="font-semibold text-xs text-amber-900 mb-0.5 font-sans">Operational Simulation Mode</h4>
-                  <p className="text-[11px] text-amber-700 leading-normal">
-                    This admin console is configured for cloud integration. Once the production backend database is connected, reports submitted by citizens will stream directly into this view in real time.
+                <div className="flex-1">
+                  <div className="flex items-center justify-between">
+                    <h4 className="font-semibold text-xs text-charcoal mb-0.5 font-sans">
+                      Centralized In-Memory Mock Store Active
+                    </h4>
+                    <span className="text-[10px] bg-teal/10 text-teal px-2 py-0.5 rounded-full font-medium">Database-Free</span>
+                  </div>
+                  <p className="text-[11px] text-charcoal-light leading-normal">
+                    The admin dashboard is synchronized in real time with the backend in-memory mock-data service. Civic complaints submitted by citizens appear here immediately. (Limitation: in-memory data resets when the backend server restarts).
                   </p>
                 </div>
               </div>
@@ -603,7 +607,7 @@ export function AdminDashboard() {
               {/* Stats Overview */}
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {[
-                  { label: "Total Recieved", count: totalCount, color: "text-charcoal bg-charcoal/5" },
+                  { label: "Total Received", count: totalCount, color: "text-charcoal bg-charcoal/5" },
                   { label: "Pending Review", count: pendingCount, color: "text-coral bg-coral/5" },
                   { label: "In Progress", count: inProgressCount, color: "text-amber-600 bg-amber-50" },
                   { label: "Resolved Issues", count: resolvedCount, color: "text-sage bg-sage/10" }
@@ -621,11 +625,22 @@ export function AdminDashboard() {
 
               {/* Advanced Search & Filtering Console */}
               <div className="bg-white rounded-3xl border border-charcoal/5 p-6 shadow-sm space-y-4">
-                <div className="flex items-center gap-2 mb-2">
-                  <Filter className="w-4 h-4 text-charcoal-light" />
-                  <h3 className="text-sm font-semibold text-charcoal uppercase tracking-wider">
-                    Complaint Filtering Console
-                  </h3>
+                <div className="flex items-center justify-between gap-2 mb-2">
+                  <div className="flex items-center gap-2">
+                    <Filter className="w-4 h-4 text-charcoal-light" />
+                    <h3 className="text-sm font-semibold text-charcoal uppercase tracking-wider">
+                      Complaint Filtering Console
+                    </h3>
+                  </div>
+                  <button
+                    onClick={() => fetchAdminReports()}
+                    disabled={isRefreshing}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-teal/10 hover:bg-teal/20 text-teal text-xs font-medium transition-colors cursor-pointer disabled:opacity-50"
+                    title="Reload reports from backend"
+                  >
+                    <RefreshCw className={cn("w-3.5 h-3.5", isRefreshing && "animate-spin")} />
+                    <span>{isRefreshing ? "Refreshing..." : "Refresh Reports"}</span>
+                  </button>
                 </div>
                 
                 <div className="grid sm:grid-cols-2 md:grid-cols-4 gap-4">

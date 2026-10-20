@@ -1,7 +1,7 @@
 import { BrevoClient } from '@getbrevo/brevo';
 import axios from 'axios';
 import dotenv from 'dotenv';
-import { IReport } from '../models/Report.js';
+import { IReportData } from './mockDataService.js';
 
 export interface BrevoSendResult {
   sent: boolean;
@@ -29,16 +29,19 @@ export class BrevoService {
   }
 
   /**
-   * Generates a modern, responsive HTML email template for the garbage complaint.
-   * All user-supplied text fields are rigorously sanitized to prevent injection attacks.
+   * Generates a modern, responsive HTML email template for the civic issue report.
+   * All user-supplied text fields are sanitized to prevent injection attacks.
    */
-  public static generateComplaintEmailHtml(report: IReport): string {
+  public static generateComplaintEmailHtml(report: IReportData): string {
     const sanitizedName = escapeHtml(report.name || 'Citizen Reporter');
     const sanitizedEmail = escapeHtml(report.email);
     const sanitizedLocation = escapeHtml(report.locationName);
+    const sanitizedCategory = escapeHtml(report.category || 'Garbage');
+    const sanitizedDepartment = escapeHtml(report.department || 'Sanitation Department');
     const sanitizedContact = escapeHtml(report.contact);
     const sanitizedDescription = escapeHtml(report.description);
     const sanitizedComplaintId = escapeHtml(report.complaintId);
+    const sanitizedTitle = escapeHtml(report.title || 'Civic Issue');
 
     const coordinatesText =
       report.latitude !== undefined && report.longitude !== undefined
@@ -61,7 +64,7 @@ export class BrevoService {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>New Garbage Complaint Received – EcoCity</title>
+  <title>New Civic Issue Report — EcoCity</title>
   <style>
     body {
       margin: 0;
@@ -154,7 +157,7 @@ export class BrevoService {
     .field-label {
       color: #64748B;
       font-weight: 500;
-      min-width: 130px;
+      min-width: 140px;
     }
     .field-value {
       color: #0F172A;
@@ -224,14 +227,39 @@ export class BrevoService {
 <body>
   <div class="wrapper">
     <div class="header">
-      <h1>EcoCity Civic Incident Report</h1>
-      <p>Automated Municipal Alert &bull; Sanitation Division</p>
-      <div class="badge">Complaint ID: ${sanitizedComplaintId}</div>
+      <h1>New Civic Issue Report — EcoCity</h1>
+      <p>Automated Municipal Alert &bull; ${sanitizedDepartment}</p>
+      <div class="badge">Report ID: ${sanitizedComplaintId}</div>
     </div>
 
     <div class="content">
       <div class="alert-banner">
-        <strong>Action Required:</strong> A citizen has submitted a new garbage complaint. Please review the details below and dispatch a sanitation unit or update the status accordingly.
+        <strong>Action Required:</strong> A citizen has submitted a new civic issue report. Please inspect the details below and dispatch a municipal unit or update the status accordingly.
+      </div>
+
+      <!-- Incident Overview -->
+      <div class="card">
+        <div class="card-title">&bull; Report Overview</div>
+        <div class="field-row">
+          <span class="field-label">Issue Title:</span>
+          <span class="field-value">${sanitizedTitle}</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Category:</span>
+          <span class="field-value" style="color: #0F766E;">${sanitizedCategory}</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Department:</span>
+          <span class="field-value">${sanitizedDepartment}</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Initial Status:</span>
+          <span class="field-value" style="color: #D97706;">Pending Verification</span>
+        </div>
+        <div class="field-row">
+          <span class="field-label">Submission Date:</span>
+          <span class="field-value">${formattedDate}</span>
+        </div>
       </div>
 
       <!-- Citizen Details -->
@@ -257,7 +285,7 @@ export class BrevoService {
 
       <!-- Incident Location -->
       <div class="card">
-        <div class="card-title">&bull; Incident Location &amp; Timestamp</div>
+        <div class="card-title">&bull; Incident Location &amp; Coordinates</div>
         <div class="field-row">
           <span class="field-label">Location / Landmark:</span>
           <span class="field-value">${sanitizedLocation}</span>
@@ -273,14 +301,6 @@ export class BrevoService {
                 <span class="field-value" style="color: #94A3B8; font-style: italic;">Not captured (Manual address provided)</span>
               </div>`
         }
-        <div class="field-row">
-          <span class="field-label">Submission Date:</span>
-          <span class="field-value">${formattedDate}</span>
-        </div>
-        <div class="field-row">
-          <span class="field-label">Initial Status:</span>
-          <span class="field-value" style="color: #D97706;">Pending Verification</span>
-        </div>
 
         <div style="text-align: left; margin-top: 14px;">
           <a href="${mapsUrl}" target="_blank" class="button">Open in Google Maps &rarr;</a>
@@ -296,22 +316,26 @@ export class BrevoService {
       </div>
 
       <!-- Photographic Evidence -->
-      <div class="card">
-        <div class="card-title">&bull; Photographic Evidence</div>
-        <p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded garbage photo taken at the incident location:</p>
-        <div class="image-container">
-          <img src="${report.photoUrl}" alt="Garbage Complaint Evidence" />
-        </div>
-        <a href="${report.photoUrl}" target="_blank" class="view-image-link">
-          Click here to view or download full-size photo &nearr;
-        </a>
-      </div>
+      ${
+        report.photoUrl
+          ? `<div class="card">
+              <div class="card-title">&bull; Photographic Evidence</div>
+              <p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded photo taken at the incident location:</p>
+              <div class="image-container">
+                <img src="${report.photoUrl}" alt="Civic Issue Evidence" />
+              </div>
+              <a href="${report.photoUrl}" target="_blank" class="view-image-link">
+                Click here to view or download full-size photo &nearr;
+              </a>
+            </div>`
+          : ''
+      }
     </div>
 
     <div class="footer">
       <p><strong>EcoCity Smart Civic Engagement Platform</strong></p>
-      <p>This is an automated notification dispatched via Brevo Transactional Email Service.</p>
-      <p>To inspect or update this issue, log in to the EcoCity Admin Portal.</p>
+      <p>This automated notification was dispatched via Brevo Transactional Email Service.</p>
+      <p>To inspect or update this issue, log in to the EcoCity Admin Console.</p>
     </div>
   </div>
 </body>
@@ -320,29 +344,38 @@ export class BrevoService {
 
   /**
    * Sends the transactional email to the administrator using Brevo API.
-   * Gracefully returns BrevoSendResult without throwing an unhandled exception.
+   * Subject: "New Civic Issue Report — EcoCity"
+   * Recipient: likithamindi024@gmail.com
    */
-  public static async sendComplaintNotification(report: IReport): Promise<BrevoSendResult> {
+  public static async sendComplaintNotification(report: IReportData): Promise<BrevoSendResult> {
     dotenv.config({ override: true });
     const apiKey = process.env.BREVO_API_KEY?.trim();
-    const adminEmail = process.env.ADMIN_EMAIL?.trim();
-    const senderEmail = process.env.BREVO_SENDER_EMAIL?.trim() || 'notifications@ecocity.org';
+    const adminEmail = (
+      process.env.ADMIN_NOTIFICATION_EMAIL ||
+      process.env.ADMIN_EMAIL ||
+      'likithamindi024@gmail.com'
+    ).trim();
+    const senderEmail = (
+      process.env.BREVO_SENDER_EMAIL ||
+      'likithamindi024@gmail.com'
+    ).trim();
     const senderName = process.env.BREVO_SENDER_NAME?.trim() || 'EcoCity Civic System';
 
-    // 1. Guard check for required configuration
+    // 1. Guard check for configuration
     if (!apiKey || apiKey === '' || apiKey === 'your_brevo_api_key_here') {
-      const msg = 'Brevo API key is not configured in environment variables (BREVO_API_KEY). Email notification skipped.';
+      const msg = 'Brevo API key is not configured in environment variables (BREVO_API_KEY). Email delivery skipped.';
       console.warn(`[Brevo Notification] ${msg}`);
       return { sent: false, error: msg };
     }
 
-    if (!adminEmail || adminEmail === '' || adminEmail === 'admin@yourdomain.com') {
-      const msg = 'Administrator email is not configured in environment variables (ADMIN_EMAIL). Email notification skipped.';
+    if (!adminEmail || adminEmail === '') {
+      const msg = 'Administrator recipient email is not configured. Email delivery skipped.';
       console.warn(`[Brevo Notification] ${msg}`);
       return { sent: false, error: msg };
     }
 
-    const subject = `New Garbage Complaint Received – EcoCity [${report.complaintId}]`;
+    // Exact subject required by specifications
+    const subject = 'New Civic Issue Report — EcoCity';
     const htmlContent = this.generateComplaintEmailHtml(report);
 
     // 2. Prepare payload
@@ -365,8 +398,7 @@ export class BrevoService {
       }
     };
 
-    // If photoUrl is an accessible public CDN URL ending with a standard image extension, attach it safely;
-    // otherwise the high-resolution photo is clickable and viewable directly via the secure link in the HTML template.
+    // If photoUrl is an accessible public CDN URL ending with a standard image extension, attach it
     if (
       report.photoUrl &&
       report.photoUrl.startsWith('https://') &&
@@ -377,22 +409,20 @@ export class BrevoService {
       emailPayload.attachment = [
         {
           url: report.photoUrl,
-          name: `complaint-${report.complaintId}.jpg`
+          name: `report-${report.complaintId}.jpg`
         }
       ];
     }
 
-    // 3. Attempt delivery via official BrevoClient or REST v3 fallback
+    // 3. Attempt delivery via official BrevoClient or direct REST API v3
     try {
       const client = this.getClient();
       let messageId: string | undefined;
 
       if (client && typeof client.transactionalEmails?.sendTransacEmail === 'function') {
         const response: any = await client.transactionalEmails.sendTransacEmail(emailPayload);
-        // Brevo returns messageId on success
         messageId = response?.messageId || response?.body?.messageId || 'brevo-accepted';
       } else {
-        // Direct Brevo REST API v3 call fallback
         const response = await axios.post('https://api.brevo.com/v3/smtp/email', emailPayload, {
           headers: {
             'api-key': apiKey,
@@ -404,23 +434,38 @@ export class BrevoService {
         messageId = response.data?.messageId || 'brevo-accepted';
       }
 
-      console.log(`[Brevo Notification] Successfully sent email to ${adminEmail}. Message ID: ${messageId}`);
+      console.log(`[Brevo Notification] Successfully accepted by Brevo for delivery to ${adminEmail}. Message ID: ${messageId}`);
       return {
         sent: true,
         messageId
       };
     } catch (error: any) {
-      // Safely extract error message without exposing API keys or secrets
-      const brevoErrMsg =
-        error.response?.data?.message ||
-        error.response?.data?.code ||
-        error.message ||
-        'Unknown Brevo error';
+      const statusCode =
+        error.statusCode ||
+        error.status ||
+        error.response?.status ||
+        (String(error.message).includes('403') ? 403 : 500);
 
-      console.error(`[Brevo Notification Failed] Error sending to ${adminEmail}: ${brevoErrMsg}`);
+      let cleanMsg = error.body?.message || error.response?.data?.message || error.message || 'Unknown Brevo error';
+      if (typeof cleanMsg === 'string' && cleanMsg.includes('transactional.email')) {
+        cleanMsg = 'API key is not authorized for resource "transactional.email" (permission_denied). In Brevo Dashboard -> Settings -> SMTP & API -> API Keys, generate a key with Transactional Email permissions.';
+      } else if (typeof cleanMsg === 'string' && cleanMsg.startsWith('Status code:')) {
+        try {
+          const match = cleanMsg.match(/\{[\s\S]*\}/);
+          if (match) {
+            const parsed = JSON.parse(match[0]);
+            cleanMsg = parsed.message || cleanMsg;
+          }
+        } catch {
+          // keep original
+        }
+      }
+
+      console.error(`[Brevo Notification Failed] Status ${statusCode}: ${cleanMsg}`);
+
       return {
         sent: false,
-        error: `Brevo API error: ${brevoErrMsg}`
+        error: cleanMsg
       };
     }
   }

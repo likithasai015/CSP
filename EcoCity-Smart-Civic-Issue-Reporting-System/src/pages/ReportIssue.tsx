@@ -448,10 +448,10 @@ export function ReportIssue() {
                     <div>
                       &bull; Administrator Notification:{" "}
                       {submissionResult?.emailSent ? (
-                        <span className="text-sage font-semibold">✓ Dispatched via Brevo API</span>
+                        <span className="text-teal font-semibold">✓ Accepted by Brevo API for likithamindi024@gmail.com</span>
                       ) : (
-                        <span className="text-charcoal-light italic">
-                          (Saved in DB; {submissionResult?.emailError || "Email queued for dispatch"})
+                        <span className="text-amber-800 text-xs block mt-1 bg-amber-50 p-2 rounded-lg border border-amber-200">
+                          ⚠ Brevo Status: {submissionResult?.emailError || "Email delivery could not be initiated"}
                         </span>
                       )}
                     </div>

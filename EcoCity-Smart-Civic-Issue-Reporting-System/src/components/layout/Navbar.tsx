@@ -10,6 +10,7 @@ const PUBLIC_LINKS = [
   { name: "Events", path: "/events" },
   { name: "Report Issue", path: "/report" },
   { name: "Notifications", path: "/notifications" },
+  { name: "About", path: "/about" },
 ];
 
 export function Navbar() {

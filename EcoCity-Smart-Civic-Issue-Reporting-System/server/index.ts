@@ -4,13 +4,12 @@ import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
-import { connectDB } from './config/db.js';
 import reportRoutes from './routes/reportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
-import Admin from './models/Admin.js';
-import adminAuthRouter from "./adminAuth";
+import adminAuthRouter from './adminAuth.js';
+import mockDataService from './services/mockDataService.js';
 
 
 const app = express();
@@ -102,6 +101,7 @@ const healthHandler = (_req: Request, res: Response) => {
     status: 'healthy',
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
+    database: 'database-free (centralized in-memory mock-data service)',
     environment: process.env.NODE_ENV || (isServerless ? 'production' : 'development')
   });
 };
@@ -113,6 +113,7 @@ app.get(['/', '/api'], (_req: Request, res: Response) => {
     name: 'EcoCity Smart Civic Issue Reporting System API',
     status: 'online',
     version: '1.0.0',
+    mode: 'database-free (in-memory mock data, resets on restart)',
     endpoints: {
       health: '/api/health',
       reports: '/api/reports',
@@ -155,48 +156,21 @@ app.use('/api/*', (req: Request, res: Response) => {
 // 7. Centralized Error Handling Middleware
 app.use(errorHandler);
 
-// Helper to seed initial admin user (executed at most once per container instance)
-let hasSeededAdmin = false;
-export async function seedInitialAdmin(): Promise<void> {
-  if (hasSeededAdmin) return;
-  try {
-    const adminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase() || 'admin@ecocity.com';
-    const adminPassword = process.env.ADMIN_PASSWORD?.trim();
-
-    if (!adminPassword) {
-      hasSeededAdmin = true;
-      return;
-    }
-
-    const existingAdmin = await Admin.findOne({ email: adminEmail });
-    if (!existingAdmin) {
-      await Admin.create({
-        email: adminEmail,
-        name: process.env.ADMIN_NAME || 'EcoCity Administrator',
-        password: adminPassword,
-        role: 'admin'
-      });
-      console.log(`[Auth] Initial administrator seeded for: ${adminEmail}`);
-    }
-    hasSeededAdmin = true;
-  } catch (seedErr: any) {
-    console.warn(`[Auth Seed Warning] Could not check or seed admin: ${seedErr.message}`);
-  }
-}
-
 // Start Server for local execution
 export async function startServer() {
   try {
-    await connectDB();
-    await seedInitialAdmin();
+    const adminConfig = mockDataService.getAdminConfig();
 
     const server = app.listen(PORT, () => {
       console.log(`\n==================================================`);
-      console.log(`  EcoCity Civic Backend Server Running`);
+      console.log(`  EcoCity Smart Civic Issue Reporting Backend`);
+      console.log(`  Mode: Database-Free (Centralized In-Memory Store)`);
       console.log(`  Port: http://localhost:${PORT}`);
       console.log(`  Health Check: http://localhost:${PORT}/api/health`);
       console.log(`  Reports API:  http://localhost:${PORT}/api/reports`);
+      console.log(`  Admin Email:  ${adminConfig.email}`);
       console.log(`  Brevo Email:  ${process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY'}`);
+      console.log(`  Note: In-memory mock data resets when backend restarts.`);
       console.log(`==================================================\n`);
     });
 

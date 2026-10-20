@@ -8,6 +8,7 @@ import { AdminLogin } from "./pages/AdminLogin";
 import { Profile } from "./pages/Profile";
 import { Notifications } from "./pages/Notifications";
 import { AdminDashboard } from "./pages/AdminDashboard";
+import { About } from "./pages/About";
 import { AuthProvider } from "./context/AuthContext";
 import { ProtectedRoute } from "./components/layout/ProtectedRoute";
 
@@ -20,7 +21,7 @@ export default function App() {
             <Route path="/" element={<Home />} />
             <Route path="/events" element={<CommunityEvents />} />
             <Route path="/memories" element={<Navigate to="/events" replace />} />
-            <Route path="/about" element={<Navigate to="/" replace />} />
+            <Route path="/about" element={<About />} />
             
             {/* Protected Routes */}
             <Route element={<ProtectedRoute />}>
@@ -37,6 +38,8 @@ export default function App() {
           {/* Auth page without Navbar/Footer */}
           <Route path="/auth" element={<Auth />} />
           <Route path="/admin-login" element={<AdminLogin />} />
+          <Route path="/admin/login" element={<Navigate to="/admin-login" replace />} />
+          <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </Router>
     </AuthProvider>

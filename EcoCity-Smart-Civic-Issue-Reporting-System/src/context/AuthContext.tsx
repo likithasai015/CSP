@@ -20,7 +20,8 @@ interface AuthContextType {
   loading: boolean;
   loginWithGoogle: () => void;
   logout: () => Promise<void>;
-  login: (email: string, role?: "user" | "admin") => void; // Mock fallback
+  login: (email: string, role?: "user" | "admin") => void;
+  setAuthSession: (token: string, user: UserToken) => void;
   refreshUser: () => Promise<void>;
   refreshStats: () => Promise<void>;
   isAuthenticated: boolean;
@@ -32,7 +33,6 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [user, setUser] = useState<UserToken | null>(() => {
-    // Try to load mock user fallback if there is one
     const stored = localStorage.getItem("ecocity_auth");
     if (stored) {
       try {
@@ -48,12 +48,42 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const [loading, setLoading] = useState(true);
 
   const fetchUserStats = useCallback(async () => {
-    // Frontend-only mode stats state
     setStats((prev) => prev);
   }, []);
 
   const fetchUserProfile = useCallback(async () => {
     setLoading(true);
+    const token = localStorage.getItem("token");
+
+    // If an authorization token is present, verify session with backend /api/auth/me
+    if (token) {
+      try {
+        const res = await authAPI.getMe();
+        if (res.data?.success && res.data.user) {
+          const u: UserToken = {
+            id: res.data.user.id,
+            name: res.data.user.name || "EcoCity Administrator",
+            email: res.data.user.email,
+            role: "admin",
+          };
+          setUser(u);
+          localStorage.setItem("ecocity_auth", JSON.stringify(u));
+          setLoading(false);
+          return;
+        }
+      } catch (err: any) {
+        console.warn("Backend token verification failed:", err.message);
+        if (err.response?.status === 401 || err.response?.status === 403) {
+          localStorage.removeItem("token");
+          localStorage.removeItem("ecocity_auth");
+          setUser(null);
+          setLoading(false);
+          return;
+        }
+      }
+    }
+
+    // Fallback to local stored session if token was not present
     const stored = localStorage.getItem("ecocity_auth");
     if (stored) {
       try {
@@ -67,6 +97,12 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     setLoading(false);
   }, []);
 
+  const setAuthSession = (token: string, userData: UserToken) => {
+    localStorage.setItem("token", token);
+    localStorage.setItem("ecocity_auth", JSON.stringify(userData));
+    setUser(userData);
+  };
+
   const loginWithGoogle = () => {
     const sessionRandom = Math.floor(1000 + Math.random() * 9000);
     const mockUser: UserToken = {
@@ -79,7 +115,6 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
     localStorage.setItem("ecocity_auth", JSON.stringify(mockUser));
   };
 
-  // Keep original mock login as a fallback for pure frontend demonstration or local tests
   const login = (email: string, role: "user" | "admin" = "user") => {
     const newUser: UserToken = {
       id: "mock-1",
@@ -94,10 +129,9 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
   const logout = async () => {
     setLoading(true);
     try {
-      // Call backend logout if possible
       await authAPI.logout();
     } catch (err: any) {
-      console.error('Logout API call failed', err.message);
+      console.warn('Logout API call notice:', err.message);
     } finally {
       localStorage.removeItem('token');
       localStorage.removeItem('ecocity_auth');
@@ -144,6 +178,7 @@ export const AuthProvider = ({ children }: { children: ReactNode }) => {
         loginWithGoogle,
         logout,
         login,
+        setAuthSession,
         refreshUser: fetchUserProfile,
         refreshStats: fetchUserStats,
         isAuthenticated,

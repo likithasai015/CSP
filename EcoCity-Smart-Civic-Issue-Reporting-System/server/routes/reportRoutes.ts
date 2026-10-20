@@ -12,9 +12,16 @@ router.post('/', submissionLimiter, uploadReportPhoto, ReportController.submitRe
 // Public recent reports route for landing / citizen overview
 router.get('/public/recent', ReportController.getPublicRecentReports);
 
-// Administrator-protected routes
+// Administrator stats summary
+router.get('/stats', requireAdmin, ReportController.getStats);
+
+// Administrator-protected list route
 router.get('/', requireAdmin, ReportController.getAllReports);
+
+// Specific report details by ID
 router.get('/:id', ReportController.getReportById);
+
+// Administrator update routes
 router.patch('/:id/status', requireAdmin, ReportController.updateReportStatus);
 router.post('/:id/resend-email', requireAdmin, ReportController.resendNotification);
 

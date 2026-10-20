@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
-import Admin from '../models/Admin.js';
 import { AuthRequest } from '../middleware/auth.js';
+import mockDataService from '../services/mockDataService.js';
 
 export class AuthController {
   /**
@@ -24,49 +24,9 @@ export class AuthController {
         return;
       }
 
-      const normalizedEmail = email.trim().toLowerCase();
-      let admin = await Admin.findOne({ email: normalizedEmail });
-
-      // If admin doesn't exist yet, check if credentials match .env or development configuration
-      if (!admin) {
-        const configuredAdminEmail = process.env.ADMIN_EMAIL?.trim().toLowerCase();
-        const configuredAdminPassword = process.env.ADMIN_PASSWORD?.trim();
-        const isProduction = process.env.NODE_ENV === 'production';
-
-        // Check configured .env credentials
-        if (
-          configuredAdminEmail &&
-          configuredAdminPassword &&
-          normalizedEmail === configuredAdminEmail &&
-          password === configuredAdminPassword
-        ) {
-          admin = await Admin.create({
-            email: configuredAdminEmail,
-            name: process.env.ADMIN_NAME || 'System Administrator',
-            password: configuredAdminPassword,
-            role: 'admin'
-          });
-        } else if (!isProduction && normalizedEmail === 'admin@ecocity.com' && password === 'Admin@123') {
-          // Development convenience only: initialize default admin in non-production mode
-          admin = await Admin.create({
-            email: 'admin@ecocity.com',
-            name: 'EcoCity Administrator',
-            password: 'Admin@123',
-            role: 'admin'
-          });
-        }
-      }
+      const admin = mockDataService.validateAdminCredentials(email, password);
 
       if (!admin) {
-        res.status(401).json({
-          success: false,
-          message: 'Invalid administrator email or password'
-        });
-        return;
-      }
-
-      const isMatch = await admin.comparePassword(password);
-      if (!isMatch) {
         res.status(401).json({
           success: false,
           message: 'Invalid administrator email or password'
@@ -76,9 +36,10 @@ export class AuthController {
 
       const jwtSecret =
         process.env.JWT_SECRET || 'ecocity-default-jwt-secret-key-change-in-production';
+
       const token = jwt.sign(
         {
-          id: admin._id,
+          id: admin.id,
           email: admin.email,
           role: admin.role
         },
@@ -91,7 +52,7 @@ export class AuthController {
         message: 'Admin authentication successful',
         token,
         admin: {
-          id: admin._id,
+          id: admin.id,
           name: admin.name,
           email: admin.email,
           role: admin.role
@@ -112,35 +73,23 @@ export class AuthController {
     next: NextFunction
   ): Promise<void> {
     try {
-      if (!req.user) {
+      if (!req.user || req.user.role !== 'admin') {
         res.status(401).json({
           success: false,
-          message: 'Not authenticated'
+          message: 'Not authenticated as administrator'
         });
         return;
       }
 
-      const admin = await Admin.findById(req.user.id).select('-password');
-      if (!admin) {
-        res.status(200).json({
-          success: true,
-          user: {
-            id: req.user.id,
-            email: req.user.email,
-            role: req.user.role,
-            name: 'Administrator'
-          }
-        });
-        return;
-      }
+      const admin = mockDataService.getAdminById(req.user.id);
 
       res.status(200).json({
         success: true,
         user: {
-          id: admin._id,
-          name: admin.name,
-          email: admin.email,
-          role: admin.role
+          id: admin ? admin.id : req.user.id,
+          name: admin ? admin.name : 'EcoCity Administrator',
+          email: admin ? admin.email : req.user.email,
+          role: 'admin'
         }
       });
     } catch (error: any) {
