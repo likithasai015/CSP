@@ -324,9 +324,9 @@ export class BrevoService {
               <div class="image-container">
                 <img src="${report.photoUrl}" alt="Civic Issue Evidence" />
               </div>
-              <a href="${report.photoUrl}" target="_blank" class="view-image-link">
-                Click here to view or download full-size photo &nearr;
-              </a>
+              ${report.photoUrl.startsWith('data:')
+                ? '<p style="font-size: 12px; color: #64748B; margin-top: 8px;">High-resolution evidence file is attached directly to this email notification.</p>'
+                : `<a href="${report.photoUrl}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`}
             </div>`
           : ''
       }
@@ -412,6 +412,19 @@ export class BrevoService {
           name: `report-${report.complaintId}.jpg`
         }
       ];
+    } else if (report.photoUrl && report.photoUrl.startsWith('data:')) {
+      const match = report.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1];
+        const base64Content = match[2];
+        const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
+        emailPayload.attachment = [
+          {
+            content: base64Content,
+            name: `evidence-${report.complaintId || 'photo'}.${ext}`
+          }
+        ];
+      }
     }
 
     // 3. Attempt delivery via official BrevoClient or direct REST API v3

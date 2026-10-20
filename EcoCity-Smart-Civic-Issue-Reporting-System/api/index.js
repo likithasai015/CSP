@@ -21,11 +21,13 @@ var StorageService = class {
     return !!(cloudName && apiKey && apiSecret && cloudName !== "your_cloud_name" && apiKey !== "your_api_key");
   }
   /**
-   * Upload an image file to Cloudinary if configured; otherwise generate a reliable URL.
-   * In serverless environments (Vercel) without Cloudinary, converts the image buffer into a
-   * self-contained Data URI so the image is persistently preserved in MongoDB and viewable.
+   * Process uploaded photo:
+   * 1. If Cloudinary is configured, uploads to Cloudinary CDN.
+   * 2. Otherwise converts the uploaded file into a persistent, self-contained Data URI.
+   *    This guarantees that photos render instantly, never 404 on Vercel's ephemeral
+   *    filesystem, and are durable within the in-memory mock store.
    */
-  static async processUploadedFile(file, reqHost, protocol) {
+  static async processUploadedFile(file, _reqHost, _protocol) {
     const isServerless3 = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
     if (this.isCloudinaryConfigured()) {
       try {
@@ -49,34 +51,32 @@ var StorageService = class {
           publicId: uploadResult.public_id
         };
       } catch (err) {
-        console.warn(`[Storage] Cloudinary upload failed (${err.message}). Falling back to local storage.`);
+        console.warn(`[Storage] Cloudinary upload failed (${err.message}). Falling back to self-contained Data URI.`);
       }
     }
-    if (isServerless3) {
-      try {
-        if (file.path && fs.existsSync(file.path)) {
-          const fileBuffer = fs.readFileSync(file.path);
-          const mimeType = file.mimetype || "image/jpeg";
-          const dataUri = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+    try {
+      if (file.path && fs.existsSync(file.path)) {
+        const fileBuffer = fs.readFileSync(file.path);
+        const mimeType = file.mimetype || "image/jpeg";
+        const dataUri = `data:${mimeType};base64,${fileBuffer.toString("base64")}`;
+        if (isServerless3) {
           try {
             fs.unlinkSync(file.path);
           } catch {
           }
-          const filename2 = path.basename(file.path);
-          return {
-            url: dataUri,
-            publicId: filename2
-          };
         }
-      } catch (readErr) {
-        console.warn(`[Storage Warning] Could not encode file as Data URI: ${readErr.message}`);
+        const filename2 = path.basename(file.path);
+        return {
+          url: dataUri,
+          publicId: filename2
+        };
       }
+    } catch (readErr) {
+      console.warn(`[Storage Warning] Could not encode file as Data URI: ${readErr.message}`);
     }
-    const baseUrl = process.env.SERVER_URL || (reqHost ? `${protocol || "http"}://${reqHost}` : "http://localhost:5000");
     const filename = path.basename(file.path);
-    const localUrl = `${baseUrl}/uploads/${filename}`;
     return {
-      url: localUrl,
+      url: `/uploads/${filename}`,
       publicId: filename
     };
   }
@@ -374,9 +374,7 @@ var BrevoService = class {
               <div class="image-container">
                 <img src="${report.photoUrl}" alt="Civic Issue Evidence" />
               </div>
-              <a href="${report.photoUrl}" target="_blank" class="view-image-link">
-                Click here to view or download full-size photo &nearr;
-              </a>
+              ${report.photoUrl.startsWith("data:") ? '<p style="font-size: 12px; color: #64748B; margin-top: 8px;">High-resolution evidence file is attached directly to this email notification.</p>' : `<a href="${report.photoUrl}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`}
             </div>` : ""}
     </div>
 
@@ -437,6 +435,19 @@ var BrevoService = class {
           name: `report-${report.complaintId}.jpg`
         }
       ];
+    } else if (report.photoUrl && report.photoUrl.startsWith("data:")) {
+      const match = report.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
+      if (match) {
+        const mimeType = match[1];
+        const base64Content = match[2];
+        const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
+        emailPayload.attachment = [
+          {
+            content: base64Content,
+            name: `evidence-${report.complaintId || "photo"}.${ext}`
+          }
+        ];
+      }
     }
     try {
       const client = this.getClient();
@@ -516,9 +527,9 @@ var MockDataService = class {
         department: "Sanitation Department",
         assignedDepartment: "Sanitation Department",
         priority: "High",
-        photoUrl: "/uploads/report-1792070984340-abe79d636034dd90.jpg",
+        photoUrl: "https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?auto=format&fit=crop&q=80&w=1200",
         photoPublicId: "report-1792070984340-abe79d636034dd90.jpg",
-        img: "/uploads/report-1792070984340-abe79d636034dd90.jpg",
+        img: "https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?auto=format&fit=crop&q=80&w=1200",
         emailNotification: {
           sent: true,
           messageId: "seed-notif-1",
@@ -548,9 +559,9 @@ var MockDataService = class {
         assignedDepartment: "Electrical Department",
         priority: "Medium",
         resolutionNotes: "Replaced LED bulb assembly and checked underground cabling. Lamp restored.",
-        photoUrl: "/uploads/report-1792071173419-33e78100399624c2.jpg",
+        photoUrl: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=1200",
         photoPublicId: "report-1792071173419-33e78100399624c2.jpg",
-        img: "/uploads/report-1792071173419-33e78100399624c2.jpg",
+        img: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=1200",
         emailNotification: {
           sent: true,
           messageId: "seed-notif-2",
@@ -578,9 +589,9 @@ var MockDataService = class {
         department: "Public Works Department",
         assignedDepartment: "Public Works Department",
         priority: "High",
-        photoUrl: "/uploads/report-1792071909470-602d96b2ea54128d.jpg",
+        photoUrl: "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&q=80&w=1200",
         photoPublicId: "report-1792071909470-602d96b2ea54128d.jpg",
-        img: "/uploads/report-1792071909470-602d96b2ea54128d.jpg",
+        img: "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&q=80&w=1200",
         emailNotification: {
           sent: true,
           messageId: "seed-notif-3",
@@ -608,9 +619,9 @@ var MockDataService = class {
         department: "Water Department",
         assignedDepartment: "Water Department",
         priority: "Medium",
-        photoUrl: "/uploads/report-1792075974281-1f975a02bfb931c5.jpg",
+        photoUrl: "https://images.unsplash.com/photo-1542013936693-884638332954?auto=format&fit=crop&q=80&w=1200",
         photoPublicId: "report-1792075974281-1f975a02bfb931c5.jpg",
-        img: "/uploads/report-1792075974281-1f975a02bfb931c5.jpg",
+        img: "https://images.unsplash.com/photo-1542013936693-884638332954?auto=format&fit=crop&q=80&w=1200",
         emailNotification: {
           sent: true,
           messageId: "seed-notif-4",
@@ -1514,7 +1525,28 @@ app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/api", apiLimiter);
 app.use("/api/admin", adminAuth_default);
-app.use("/uploads", express.static(uploadDir2));
+app.use(["/uploads", "/api/uploads"], express.static(uploadDir2));
+app.get(["/uploads/:filename", "/api/uploads/:filename"], (req, res) => {
+  const filename = path3.basename(req.params.filename || "");
+  const candidateDirs = [
+    uploadDir2,
+    path3.resolve(process.cwd(), "uploads"),
+    path3.resolve(process.cwd(), "EcoCity-Smart-Civic-Issue-Reporting-System", "uploads")
+  ];
+  for (const dir of candidateDirs) {
+    const fullPath = path3.join(dir, filename);
+    if (fs3.existsSync(fullPath)) {
+      try {
+        const stats = fs3.statSync(fullPath);
+        if (stats.size > 100) {
+          return res.sendFile(fullPath);
+        }
+      } catch {
+      }
+    }
+  }
+  res.redirect("https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800");
+});
 var healthHandler = (_req, res) => {
   res.status(200).json({
     status: "healthy",

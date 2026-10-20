@@ -1,7 +1,9 @@
 import { 
   Camera, MapPin, Calendar as CalIcon, Send, CheckCircle2, 
-  ChevronDown, X, User, Mail, AlertCircle, Info, Navigation, RefreshCw
+  ChevronDown, X, User, Mail, AlertCircle, Info, Navigation, RefreshCw,
+  ExternalLink, Maximize2
 } from "lucide-react";
+import { PhotoViewerModal, openImageInNewTab, getCategoryFallbackImage, normalizeReportImageUrl } from "../components/common/PhotoViewerModal";
 import React, { useState, useEffect } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { cn } from "../lib/utils";
@@ -121,6 +123,8 @@ export function ReportIssue() {
 
   // Selected complaint details modal state
   const [selectedReport, setSelectedReport] = useState<UnifiedReport | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxTitle, setLightboxTitle] = useState<string>("Photographic Evidence");
 
   // Sync citizen info when user object updates
   useEffect(() => {
@@ -166,7 +170,7 @@ export function ReportIssue() {
             userEmail: r.email,
             description: r.description || "",
             contact: r.contact,
-            img: r.photoUrl || r.img || garbageOverflowImg,
+            img: normalizeReportImageUrl(r.photoUrl || r.img, r.category),
             afterImg: r.resolutionImage,
             department: r.department || getDepartmentByCategory(r.category || "Garbage"),
             latitude: r.latitude,
@@ -335,7 +339,7 @@ export function ReportIssue() {
         userEmail: savedData?.email || email,
         description: savedData?.description || description,
         contact: savedData?.contact || contact || undefined,
-        img: savedData?.photoUrl || photoPreview || garbageOverflowImg,
+        img: normalizeReportImageUrl(savedData?.photoUrl || photoPreview, selectedCategory),
         department: savedData?.department || getDepartmentByCategory(selectedCategory),
         latitude: savedData?.latitude,
         longitude: savedData?.longitude,
@@ -956,34 +960,119 @@ export function ReportIssue() {
 
                 {/* Photographic Evidence */}
                 <div>
-                  <h4 className="text-xs font-bold uppercase tracking-wider text-charcoal-light mb-4">Site Visual Documentation</h4>
+                  <div className="flex items-center justify-between mb-4">
+                    <h4 className="text-xs font-bold uppercase tracking-wider text-charcoal">
+                      Photographic Evidence
+                    </h4>
+                    <span className="text-[11px] text-charcoal-light/70 font-medium">
+                      Click any photo to enlarge or open in full view
+                    </span>
+                  </div>
                   <div className="grid sm:grid-cols-2 gap-6">
+                    {/* Before Image (Citizen Evidence) */}
                     <div>
-                      <span className="block text-[10px] font-bold text-charcoal-light uppercase tracking-wider mb-2">Before Image (Citizen Evidence)</span>
-                      <div className="h-44 rounded-2xl overflow-hidden border border-charcoal/5 bg-ivory shadow-inner relative flex items-center justify-center">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="block text-[10px] font-bold text-charcoal-light uppercase tracking-wider">
+                          Before Image (Citizen Evidence)
+                        </span>
+                        {selectedReport.img && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openImageInNewTab(selectedReport.img!);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal hover:text-teal-light transition-colors cursor-pointer"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Open full size
+                          </button>
+                        )}
+                      </div>
+                      <div
+                        onClick={() => {
+                          if (selectedReport.img) {
+                            setLightboxImage(selectedReport.img);
+                            setLightboxTitle(`${selectedReport.title} — Evidence Photo`);
+                          }
+                        }}
+                        className={cn(
+                          "h-52 rounded-2xl overflow-hidden border border-charcoal/10 bg-ivory shadow-inner relative flex items-center justify-center group transition-all",
+                          selectedReport.img ? "cursor-pointer hover:border-teal/40 hover:shadow-md" : ""
+                        )}
+                      >
                         {selectedReport.img ? (
-                          <img 
-                            src={selectedReport.img} 
-                            alt="Before state" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                          <>
+                            <img 
+                              src={selectedReport.img} 
+                              alt="Citizen Evidence" 
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                const fallback = getCategoryFallbackImage(selectedReport.category);
+                                if (target.src !== fallback) {
+                                  target.src = fallback;
+                                }
+                              }}
+                            />
+                            {/* Hover overlay hint */}
+                            <div className="absolute inset-0 bg-charcoal/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs backdrop-blur-[2px]">
+                              <Maximize2 className="w-4 h-4" />
+                              <span>Click to enlarge photo</span>
+                            </div>
+                          </>
                         ) : (
                           <span className="text-[11px] text-charcoal-light italic">No initial photo uploaded.</span>
                         )}
                       </div>
                     </div>
 
+                    {/* After Image (Administration) */}
                     <div>
-                      <span className="block text-[10px] font-bold text-charcoal-light uppercase tracking-wider mb-2">After Image (Administration)</span>
-                      <div className="h-44 rounded-2xl overflow-hidden border border-charcoal/5 bg-ivory shadow-inner relative flex items-center justify-center text-center p-4">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="block text-[10px] font-bold text-charcoal-light uppercase tracking-wider">
+                          After Image (Administration)
+                        </span>
+                        {selectedReport.status === "Resolved" && selectedReport.afterImg && (
+                          <button
+                            type="button"
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              openImageInNewTab(selectedReport.afterImg!);
+                            }}
+                            className="inline-flex items-center gap-1 text-[10px] font-semibold text-teal hover:text-teal-light transition-colors cursor-pointer"
+                          >
+                            <ExternalLink className="w-3 h-3" />
+                            Open full size
+                          </button>
+                        )}
+                      </div>
+                      <div
+                        onClick={() => {
+                          if (selectedReport.status === "Resolved" && selectedReport.afterImg) {
+                            setLightboxImage(selectedReport.afterImg);
+                            setLightboxTitle(`${selectedReport.title} — Resolution Verification`);
+                          }
+                        }}
+                        className={cn(
+                          "h-52 rounded-2xl overflow-hidden border border-charcoal/10 bg-ivory shadow-inner relative flex items-center justify-center text-center p-4 group transition-all",
+                          selectedReport.status === "Resolved" ? "cursor-pointer hover:border-teal/40 hover:shadow-md" : ""
+                        )}
+                      >
                         {selectedReport.status === "Resolved" ? (
-                          <img 
-                            src={selectedReport.afterImg || "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=600"} 
-                            alt="Resolved after state" 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                          <>
+                            <img 
+                              src={selectedReport.afterImg || "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=600"} 
+                              alt="Resolved after state" 
+                              className="w-full h-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                              referrerPolicy="no-referrer"
+                            />
+                            <div className="absolute inset-0 bg-charcoal/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs backdrop-blur-[2px]">
+                              <Maximize2 className="w-4 h-4" />
+                              <span>Click to enlarge photo</span>
+                            </div>
+                          </>
                         ) : (
                           <span className="text-[11px] text-coral/80 font-medium italic">
                             Resolution image will appear after the issue is resolved.
@@ -1010,6 +1099,14 @@ export function ReportIssue() {
           </div>
         )}
       </AnimatePresence>
+
+      {/* Full-size Photographic Evidence Lightbox Modal */}
+      <PhotoViewerModal
+        isOpen={Boolean(lightboxImage)}
+        imageUrl={lightboxImage}
+        title={lightboxTitle}
+        onClose={() => setLightboxImage(null)}
+      />
 
     </div>
   );

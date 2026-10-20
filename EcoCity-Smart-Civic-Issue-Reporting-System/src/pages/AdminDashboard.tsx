@@ -2,8 +2,10 @@ import {
   XCircle, BarChart3, AlertTriangle, Eye, Search, Download, 
   Trash2, Clock, User, MapPin, Calendar, ArrowUpDown, CheckCircle2, 
   Building2, LogOut, Filter, ChevronLeft, ChevronRight, FileSpreadsheet,
-  Plus, Edit3, Users, X, Sparkles, Check, ShieldCheck, RefreshCw
+  Plus, Edit3, Users, X, Sparkles, Check, ShieldCheck, RefreshCw,
+  ExternalLink, Maximize2
 } from "lucide-react";
+import { PhotoViewerModal, openImageInNewTab, getCategoryFallbackImage, normalizeReportImageUrl } from "../components/common/PhotoViewerModal";
 import React, { useState, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
 import { cn } from "../lib/utils";
@@ -81,6 +83,8 @@ export function AdminDashboard() {
 
   // Selected Report for Details Modal
   const [selectedReport, setSelectedReport] = useState<UnifiedReport | null>(null);
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null);
+  const [lightboxTitle, setLightboxTitle] = useState<string>("Photographic Evidence");
 
   // Dynamic reports state synced with localStorage
   const [reports, setReports] = useState<UnifiedReport[]>(() => {
@@ -138,7 +142,7 @@ export function AdminDashboard() {
           userEmail: r.email || r.userEmail,
           description: r.description || "",
           contact: r.contact,
-          img: r.photoUrl || r.img || garbageOverflowImg,
+          img: normalizeReportImageUrl(r.photoUrl || r.img, r.category),
           afterImg: r.resolutionImage,
           department: r.department || r.assignedDepartment || "Sanitation Department",
           latitude: r.latitude,
@@ -1047,15 +1051,50 @@ export function AdminDashboard() {
 
                     {/* Content */}
                     <div className="p-6 space-y-6">
-                      {/* Image Preview */}
+                      {/* Photographic Evidence Preview */}
                       {selectedReport.img && (
-                        <div className="rounded-2xl overflow-hidden border border-charcoal/5 max-h-60 bg-ivory">
-                          <img 
-                            src={selectedReport.img} 
-                            alt={selectedReport.title} 
-                            className="w-full h-full object-cover"
-                            referrerPolicy="no-referrer"
-                          />
+                        <div>
+                          <div className="flex items-center justify-between mb-2">
+                            <span className="text-[10px] uppercase font-bold text-charcoal tracking-wider">
+                              Photographic Evidence (Citizen Upload)
+                            </span>
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                openImageInNewTab(selectedReport.img!);
+                              }}
+                              className="inline-flex items-center gap-1 text-[11px] font-semibold text-teal hover:text-teal-light transition-colors cursor-pointer"
+                            >
+                              <ExternalLink className="w-3.5 h-3.5" />
+                              Open in new tab
+                            </button>
+                          </div>
+                          <div 
+                            onClick={() => {
+                              setLightboxImage(selectedReport.img!);
+                              setLightboxTitle(`${selectedReport.title} — Evidence Photo`);
+                            }}
+                            className="rounded-2xl overflow-hidden border border-charcoal/10 max-h-72 bg-ivory shadow-inner relative group cursor-pointer hover:border-teal/40 hover:shadow-md transition-all flex items-center justify-center"
+                          >
+                            <img 
+                              src={selectedReport.img} 
+                              alt={selectedReport.title} 
+                              className="w-full h-full max-h-72 object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                              referrerPolicy="no-referrer"
+                              onError={(e) => {
+                                const target = e.currentTarget;
+                                const fallback = getCategoryFallbackImage(selectedReport.category);
+                                if (target.src !== fallback) {
+                                  target.src = fallback;
+                                }
+                              }}
+                            />
+                            <div className="absolute inset-0 bg-charcoal/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2 text-white font-medium text-xs backdrop-blur-[2px]">
+                              <Maximize2 className="w-4 h-4" />
+                              <span>Click to view full-resolution photo</span>
+                            </div>
+                          </div>
                         </div>
                       )}
 
@@ -1241,10 +1280,53 @@ export function AdminDashboard() {
                         {/* Before & After Images */}
                         <div className="grid grid-cols-2 gap-4 pt-2">
                           <div>
-                            <span className="text-[10px] text-charcoal-light uppercase font-bold tracking-wider block mb-1">Before Image</span>
-                            <div className="h-32 rounded-xl bg-ivory border border-charcoal/5 overflow-hidden flex items-center justify-center relative">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-[10px] text-charcoal-light uppercase font-bold tracking-wider">Before Image</span>
+                              {selectedReport.img && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    openImageInNewTab(selectedReport.img!);
+                                  }}
+                                  className="text-[10px] text-teal hover:underline flex items-center gap-0.5 cursor-pointer font-medium"
+                                >
+                                  <ExternalLink className="w-2.5 h-2.5" />
+                                  Full
+                                </button>
+                              )}
+                            </div>
+                            <div 
+                              onClick={() => {
+                                if (selectedReport.img) {
+                                  setLightboxImage(selectedReport.img);
+                                  setLightboxTitle(`${selectedReport.title} — Evidence Photo`);
+                                }
+                              }}
+                              className={cn(
+                                "h-32 rounded-xl bg-ivory border border-charcoal/10 overflow-hidden flex items-center justify-center relative group transition-all",
+                                selectedReport.img ? "cursor-pointer hover:border-teal/40 hover:shadow-sm" : ""
+                              )}
+                            >
                               {selectedReport.img ? (
-                                <img src={selectedReport.img} alt="Before" className="w-full h-full object-cover" />
+                                <>
+                                  <img 
+                                    src={selectedReport.img} 
+                                    alt="Before" 
+                                    className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                                    onError={(e) => {
+                                      const target = e.currentTarget;
+                                      const fallback = getCategoryFallbackImage(selectedReport.category);
+                                      if (target.src !== fallback) {
+                                        target.src = fallback;
+                                      }
+                                    }}
+                                  />
+                                  <div className="absolute inset-0 bg-charcoal/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white text-[10px] font-medium">
+                                    <Maximize2 className="w-3.5 h-3.5 mr-1" />
+                                    View
+                                  </div>
+                                </>
                               ) : (
                                 <span className="text-[10px] text-charcoal-light italic">No photo uploaded</span>
                               )}
@@ -1886,6 +1968,14 @@ export function AdminDashboard() {
           )}
         </div>
       </div>
+
+      {/* Full-size Photographic Evidence Lightbox Modal */}
+      <PhotoViewerModal
+        isOpen={Boolean(lightboxImage)}
+        imageUrl={lightboxImage}
+        title={lightboxTitle}
+        onClose={() => setLightboxImage(null)}
+      />
     </div>
   );
 }

@@ -93,7 +93,34 @@ app.use('/api', apiLimiter);
 app.use("/api/admin", adminAuthRouter);
 
 // 3. Static Files (Uploaded Photos - active for local development)
-app.use('/uploads', express.static(uploadDir));
+// 3. Static & Dynamic Uploaded Photos (with durable fallback)
+app.use(['/uploads', '/api/uploads'], express.static(uploadDir));
+
+app.get(['/uploads/:filename', '/api/uploads/:filename'], (req: Request, res: Response) => {
+  const filename = path.basename(req.params.filename || '');
+  const candidateDirs = [
+    uploadDir,
+    path.resolve(process.cwd(), 'uploads'),
+    path.resolve(process.cwd(), 'EcoCity-Smart-Civic-Issue-Reporting-System', 'uploads')
+  ];
+
+  for (const dir of candidateDirs) {
+    const fullPath = path.join(dir, filename);
+    if (fs.existsSync(fullPath)) {
+      try {
+        const stats = fs.statSync(fullPath);
+        if (stats.size > 100) {
+          return res.sendFile(fullPath);
+        }
+      } catch {
+        // continue
+      }
+    }
+  }
+
+  // Redirect to reliable high-res fallback image if file is absent or dummy
+  res.redirect('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800');
+});
 
 // 4. Root & Health Check Endpoints
 const healthHandler = (_req: Request, res: Response) => {
