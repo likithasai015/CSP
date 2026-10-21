@@ -1837,12 +1837,31 @@ if (isDirectExecution && process.env.NODE_ENV !== "test" && !isServerless2) {
 var server_default = app;
 
 // serverless/index.ts
+var dbConnectionPromise = null;
+async function ensureDatabaseConnection() {
+  if (!dbConnectionPromise) {
+    dbConnectionPromise = connectDB().catch((error) => {
+      dbConnectionPromise = null;
+      throw error;
+    });
+  }
+  await dbConnectionPromise;
+}
 async function handler(req, res) {
   const matchedPath = req.headers["x-matched-path"] || req.headers["x-vercel-matched-path"];
   if (matchedPath && (req.url === "/api" || req.url === "/" || req.url?.startsWith("/api?"))) {
     req.url = matchedPath;
   }
-  return server_default(req, res);
+  try {
+    await ensureDatabaseConnection();
+    return server_default(req, res);
+  } catch (error) {
+    console.error("Vercel API initialization failed:", error);
+    return res.status(503).json({
+      success: false,
+      message: "Database connection unavailable. Please try again later."
+    });
+  }
 }
 export {
   handler as default
