@@ -13,7 +13,6 @@ import authRoutes from './routes/authRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
 import { apiLimiter } from './middleware/rateLimiter.js';
 import adminAuthRouter from './adminAuth.js';
-import mockDataService from './services/mockDataService.js';
 
 const app = express();
 const PORT = process.env.PORT || 5000;
@@ -210,7 +209,9 @@ export async function startServer() {
   try {
     await connectDB();
 
-    const adminConfig = mockDataService.getAdminConfig();
+    const adminEmail = (
+      process.env.ADMIN_EMAIL || 'likithamindi024@gmail.com'
+    ).trim();
 
     const server = app.listen(PORT, () => {
       console.log('\n==============================================');
@@ -220,10 +221,12 @@ export async function startServer() {
       console.log(` Port: http://localhost:${PORT}`);
       console.log(` Health: http://localhost:${PORT}/api/health`);
       console.log(` Reports: http://localhost:${PORT}/api/reports`);
-      console.log(` Admin Email: ${adminConfig.email}`);
+      console.log(` Admin Email: ${adminEmail}`);
       console.log(
         ` Brevo Email: ${
-          process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY'
+          process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY || process.env.BREVO_KEY
+            ? 'Configured'
+            : 'Missing BREVO_API_KEY'
         }`
       );
       console.log('==============================================\n');

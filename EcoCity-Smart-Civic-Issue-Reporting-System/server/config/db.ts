@@ -1,11 +1,11 @@
-
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
+import { ensureDefaultAdmin } from '../models/Admin.js';
 
 dotenv.config();
 
 const connectDB = async (): Promise<void> => {
-  const uri = process.env.MONGO_URI;
+  const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
 
   if (!uri) {
     throw new Error('MONGO_URI environment variable is missing');
@@ -18,6 +18,9 @@ const connectDB = async (): Promise<void> => {
 
     console.log('MongoDB connected successfully');
     console.log(`Database: ${mongoose.connection.name}`);
+
+    // Ensure administrator credentials are securely initialized in MongoDB
+    await ensureDefaultAdmin();
   } catch (error: unknown) {
     if (error instanceof Error) {
       console.error('MongoDB connection failed:', {

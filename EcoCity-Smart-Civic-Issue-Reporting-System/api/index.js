@@ -5,23 +5,90 @@ import cors from "cors";
 import path3 from "path";
 import fs3 from "fs";
 import os2 from "os";
-import mongoose4 from "mongoose";
+import mongoose6 from "mongoose";
 
 // server/config/db.ts
-import mongoose from "mongoose";
+import mongoose2 from "mongoose";
 import dotenv from "dotenv";
+
+// server/models/Admin.ts
+import mongoose, { Schema } from "mongoose";
+import bcrypt from "bcryptjs";
+var AdminSchema = new Schema(
+  {
+    name: {
+      type: String,
+      default: "EcoCity Administrator"
+    },
+    email: {
+      type: String,
+      required: true,
+      unique: true,
+      lowercase: true,
+      trim: true
+    },
+    password: {
+      type: String,
+      required: true
+    },
+    role: {
+      type: String,
+      default: "admin",
+      enum: ["admin"]
+    }
+  },
+  { timestamps: true }
+);
+AdminSchema.methods.comparePassword = async function(candidatePassword) {
+  return bcrypt.compare(candidatePassword, this.password);
+};
+var Admin = mongoose.models.Admin || mongoose.model("Admin", AdminSchema);
+async function ensureDefaultAdmin() {
+  try {
+    const adminEmail = (process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim().toLowerCase();
+    const adminPassword = (process.env.ADMIN_PASSWORD || "likitha123").trim();
+    const adminName = (process.env.ADMIN_NAME || "EcoCity Administrator").trim();
+    const existingAdmin = await Admin.findOne({ email: adminEmail }).exec();
+    if (!existingAdmin) {
+      const hashedPassword = await bcrypt.hash(adminPassword, 10);
+      await Admin.create({
+        name: adminName,
+        email: adminEmail,
+        password: hashedPassword,
+        role: "admin"
+      });
+      console.log(`[Admin Account] Initialized admin user in MongoDB: ${adminEmail}`);
+    } else {
+      const matches = await bcrypt.compare(adminPassword, existingAdmin.password).catch(() => false);
+      if (!matches) {
+        existingAdmin.password = await bcrypt.hash(adminPassword, 10);
+        await existingAdmin.save();
+        console.log(`[Admin Account] Updated bcrypt hashed password for: ${adminEmail}`);
+      }
+    }
+  } catch (error) {
+    console.error(
+      "[Admin Account Setup] Could not verify/initialize admin account in MongoDB:",
+      error.message
+    );
+  }
+}
+var Admin_default = Admin;
+
+// server/config/db.ts
 dotenv.config();
 var connectDB = async () => {
-  const uri = process.env.MONGO_URI;
+  const uri = process.env.MONGO_URI || process.env.MONGODB_URI;
   if (!uri) {
     throw new Error("MONGO_URI environment variable is missing");
   }
   try {
-    await mongoose.connect(uri, {
+    await mongoose2.connect(uri, {
       serverSelectionTimeoutMS: 1e4
     });
     console.log("MongoDB connected successfully");
-    console.log(`Database: ${mongoose.connection.name}`);
+    console.log(`Database: ${mongoose2.connection.name}`);
+    await ensureDefaultAdmin();
   } catch (error) {
     if (error instanceof Error) {
       console.error("MongoDB connection failed:", {
@@ -40,7 +107,7 @@ var db_default = connectDB;
 import { Router } from "express";
 
 // server/controllers/reportController.ts
-import mongoose3 from "mongoose";
+import mongoose4 from "mongoose";
 
 // server/services/storageService.ts
 import path from "path";
@@ -119,18 +186,63 @@ var storageService_default = StorageService;
 // server/services/brevoService.ts
 import { BrevoClient } from "@getbrevo/brevo";
 import axios from "axios";
-import dotenv2 from "dotenv";
 function escapeHtml(str) {
   if (!str) return "";
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
 }
 var BrevoService = class {
-  static getClient() {
-    const apiKey = process.env.BREVO_API_KEY;
-    if (!apiKey || apiKey.trim() === "" || apiKey === "your_brevo_api_key_here") {
+  /**
+   * Safely retrieve the Brevo API key from supported environment variables,
+   * stripping extraneous whitespace or surrounding quotes.
+   */
+  static getApiKey() {
+    const rawKey = process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY || process.env.BREVO_KEY || process.env.BREVO_APIKEY || "";
+    return rawKey.trim().replace(/^["']|["']$/g, "");
+  }
+  /**
+   * Check whether a non-dummy Brevo API key is available.
+   */
+  static isConfigured() {
+    const key = this.getApiKey();
+    return Boolean(key && key !== "your_brevo_api_key_here" && !key.startsWith("xkeysib-your_"));
+  }
+  /**
+   * Retrieve the admin recipient email. Defaults to likithamindi024@gmail.com.
+   */
+  static getAdminEmail() {
+    const raw = process.env.ADMIN_NOTIFICATION_EMAIL || process.env.ADMIN_EMAIL || "";
+    const cleaned = raw.trim().replace(/^["']|["']$/g, "");
+    if (!cleaned || cleaned.includes("yourdomain.com") || cleaned.includes("example.com")) {
+      return "likithamindi024@gmail.com";
+    }
+    return cleaned;
+  }
+  /**
+   * Retrieve the verified Brevo sender email. Defaults to likithamindi024@gmail.com.
+   */
+  static getSenderEmail() {
+    const raw = process.env.BREVO_SENDER_EMAIL || "";
+    const cleaned = raw.trim().replace(/^["']|["']$/g, "");
+    if (!cleaned || cleaned.includes("yourdomain.com") || cleaned.includes("example.com")) {
+      return "likithamindi024@gmail.com";
+    }
+    return cleaned;
+  }
+  /**
+   * Retrieve the sender display name. Defaults to EcoCity Civic System.
+   */
+  static getSenderName() {
+    const raw = process.env.BREVO_SENDER_NAME || "";
+    const cleaned = raw.trim().replace(/^["']|["']$/g, "");
+    return cleaned || "EcoCity Civic System";
+  }
+  static getClient(apiKey) {
+    if (!apiKey) return null;
+    try {
+      return new BrevoClient({ apiKey });
+    } catch {
       return null;
     }
-    return new BrevoClient({ apiKey: apiKey.trim() });
   }
   /**
    * Generates a modern, responsive HTML email template for the civic issue report.
@@ -403,11 +515,14 @@ var BrevoService = class {
       <!-- Photographic Evidence -->
       ${report.photoUrl ? `<div class="card">
               <div class="card-title">&bull; Photographic Evidence</div>
-              <p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded photo taken at the incident location:</p>
-              <div class="image-container">
-                <img src="${report.photoUrl}" alt="Civic Issue Evidence" />
-              </div>
-              ${report.photoUrl.startsWith("data:") ? '<p style="font-size: 12px; color: #64748B; margin-top: 8px;">High-resolution evidence file is attached directly to this email notification.</p>' : `<a href="${report.photoUrl}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`}
+              ${report.photoUrl.startsWith("data:") ? `<div style="background-color: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 16px; text-align: center;">
+                      <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 600; color: #166534;">\u{1F4CE} Incident Photo Attached</p>
+                      <p style="margin: 0; font-size: 12.5px; color: #4B5563;">A high-resolution photograph taken at the incident location is attached directly to this notification email: <strong>evidence-${sanitizedComplaintId}.jpg</strong></p>
+                    </div>` : `<p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded photo taken at the incident location:</p>
+                    <div class="image-container">
+                      <img src="${escapeHtml(report.photoUrl)}" alt="Civic Issue Evidence" />
+                    </div>
+                    <a href="${escapeHtml(report.photoUrl)}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`}
             </div>` : ""}
     </div>
 
@@ -426,19 +541,23 @@ var BrevoService = class {
    * Recipient: likithamindi024@gmail.com
    */
   static async sendComplaintNotification(report) {
-    dotenv2.config({ override: true });
-    const apiKey = process.env.BREVO_API_KEY?.trim();
-    const adminEmail = (process.env.ADMIN_NOTIFICATION_EMAIL || process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim();
-    const senderEmail = (process.env.BREVO_SENDER_EMAIL || "likithamindi024@gmail.com").trim();
-    const senderName = process.env.BREVO_SENDER_NAME?.trim() || "EcoCity Civic System";
-    if (!apiKey || apiKey === "" || apiKey === "your_brevo_api_key_here") {
+    const apiKey = this.getApiKey();
+    const adminEmail = this.getAdminEmail();
+    const senderEmail = this.getSenderEmail();
+    const senderName = this.getSenderName();
+    console.log("[Brevo Diagnostic] Initiating transactional email dispatch...");
+    console.log(`[Brevo Diagnostic] API Key present: ${Boolean(apiKey && apiKey !== "your_brevo_api_key_here")}`);
+    console.log(`[Brevo Diagnostic] Sender: ${senderEmail} ("${senderName}")`);
+    console.log(`[Brevo Diagnostic] Recipient: ${adminEmail}`);
+    console.log(`[Brevo Diagnostic] Complaint ID: ${report.complaintId || "N/A"}`);
+    if (!this.isConfigured()) {
       const msg = "Brevo API key is not configured in environment variables (BREVO_API_KEY). Email delivery skipped.";
-      console.warn(`[Brevo Notification] ${msg}`);
+      console.warn(`[Brevo Diagnostic] ${msg}`);
       return { sent: false, error: msg };
     }
     if (!adminEmail || adminEmail === "") {
       const msg = "Administrator recipient email is not configured. Email delivery skipped.";
-      console.warn(`[Brevo Notification] ${msg}`);
+      console.warn(`[Brevo Diagnostic] ${msg}`);
       return { sent: false, error: msg };
     }
     const subject = "New Civic Issue Report \u2014 EcoCity";
@@ -455,40 +574,60 @@ var BrevoService = class {
           email: adminEmail,
           name: "EcoCity Administrator"
         }
-      ],
-      replyTo: {
-        email: report.email,
-        name: report.name
-      }
+      ]
     };
+    if (report.email && /^\S+@\S+\.\S+$/.test(report.email)) {
+      emailPayload.replyTo = {
+        email: report.email,
+        name: report.name || "Citizen Reporter"
+      };
+    }
     if (report.photoUrl && report.photoUrl.startsWith("https://") && !report.photoUrl.includes("localhost") && !report.photoUrl.includes("127.0.0.1") && /\.(jpg|jpeg|png|webp)($|\?)/i.test(report.photoUrl)) {
       emailPayload.attachment = [
         {
           url: report.photoUrl,
-          name: `report-${report.complaintId}.jpg`
+          name: `evidence-${report.complaintId || "photo"}.jpg`
         }
       ];
     } else if (report.photoUrl && report.photoUrl.startsWith("data:")) {
-      const match = report.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1];
-        const base64Content = match[2];
-        const ext = mimeType.includes("png") ? "png" : mimeType.includes("webp") ? "webp" : "jpg";
-        emailPayload.attachment = [
-          {
-            content: base64Content,
-            name: `evidence-${report.complaintId || "photo"}.${ext}`
-          }
-        ];
+      const commaIndex = report.photoUrl.indexOf(",");
+      if (commaIndex !== -1) {
+        const meta = report.photoUrl.substring(0, commaIndex);
+        const base64Content = report.photoUrl.substring(commaIndex + 1).replace(/\s/g, "");
+        const ext = meta.includes("png") ? "png" : meta.includes("webp") ? "webp" : "jpg";
+        if (base64Content.length <= 5 * 1024 * 1024) {
+          emailPayload.attachment = [
+            {
+              content: base64Content,
+              name: `evidence-${report.complaintId || "photo"}.${ext}`
+            }
+          ];
+        } else {
+          console.warn(
+            `[Brevo Diagnostic] Evidence photo size (${Math.round(base64Content.length / 1024)} KB) exceeds 4 MB attachment limit; sending notification email without file attachment.`
+          );
+        }
       }
     }
+    console.log(`[Brevo Diagnostic] Attachment count: ${emailPayload.attachment ? emailPayload.attachment.length : 0}`);
     try {
-      const client = this.getClient();
+      const client = this.getClient(apiKey);
       let messageId;
+      let statusCode = 201;
+      let accepted = false;
       if (client && typeof client.transactionalEmails?.sendTransacEmail === "function") {
-        const response = await client.transactionalEmails.sendTransacEmail(emailPayload);
-        messageId = response?.messageId || response?.body?.messageId || "brevo-accepted";
-      } else {
+        try {
+          const response = await client.transactionalEmails.sendTransacEmail(emailPayload);
+          statusCode = response?.rawResponse?.status || 201;
+          messageId = response?.data?.messageId || Array.isArray(response?.data?.messageIds) && response.data.messageIds[0] || response?.messageId || response?.body?.messageId;
+          accepted = true;
+        } catch (sdkError) {
+          console.warn(
+            `[Brevo Diagnostic] Brevo SDK attempt returned: ${sdkError.message || "error"}. Attempting REST API fallback...`
+          );
+        }
+      }
+      if (!accepted) {
         const response = await axios.post("https://api.brevo.com/v3/smtp/email", emailPayload, {
           headers: {
             "api-key": apiKey,
@@ -497,31 +636,43 @@ var BrevoService = class {
           },
           timeout: 15e3
         });
-        messageId = response.data?.messageId || "brevo-accepted";
+        statusCode = response.status;
+        messageId = response.data?.messageId || Array.isArray(response.data?.messageIds) && response.data.messageIds[0] || "brevo-accepted";
+        accepted = true;
       }
-      console.log(`[Brevo Notification] Successfully accepted by Brevo for delivery to ${adminEmail}. Message ID: ${messageId}`);
+      const finalMessageId = messageId || "brevo-accepted";
+      console.log(`[Brevo Diagnostic] HTTP Status code: ${statusCode}`);
+      console.log(`[Brevo Diagnostic] Brevo Message ID: ${finalMessageId}`);
+      console.log(`[Brevo Diagnostic] Request successfully accepted by Brevo for delivery to ${adminEmail}. Note: Final delivery is processed asynchronously by Brevo SMTP relay servers.`);
       return {
         sent: true,
-        messageId
+        messageId: finalMessageId,
+        statusCode
       };
     } catch (error) {
-      const statusCode = error.statusCode || error.status || error.response?.status || (String(error.message).includes("403") ? 403 : 500);
-      let cleanMsg = error.body?.message || error.response?.data?.message || error.message || "Unknown Brevo error";
-      if (typeof cleanMsg === "string" && cleanMsg.includes("transactional.email")) {
-        cleanMsg = 'API key is not authorized for resource "transactional.email" (permission_denied). In Brevo Dashboard -> Settings -> SMTP & API -> API Keys, generate a key with Transactional Email permissions.';
-      } else if (typeof cleanMsg === "string" && cleanMsg.startsWith("Status code:")) {
-        try {
-          const match = cleanMsg.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsed = JSON.parse(match[0]);
-            cleanMsg = parsed.message || cleanMsg;
+      const statusCode = error.statusCode || error.status || error.response?.status || (String(error.message).includes("403") ? 403 : String(error.message).includes("401") ? 401 : 500);
+      let cleanMsg = error.response?.data?.message || error.body?.message || (typeof error.body === "string" ? error.body : null) || error.message || "Unknown Brevo error";
+      if (typeof cleanMsg === "string") {
+        if (cleanMsg.includes("transactional.email")) {
+          cleanMsg = 'API key is not authorized for resource "transactional.email" (permission_denied). In Brevo Dashboard -> Settings -> SMTP & API -> API Keys, generate a key with Transactional Email permissions.';
+        } else if (cleanMsg.includes("sender") && (cleanMsg.includes("unverified") || cleanMsg.includes("not exist") || cleanMsg.includes("invalid"))) {
+          cleanMsg = `Sender email "${senderEmail}" is not verified in Brevo. Verify this sender in Brevo Dashboard -> Senders & IP -> Senders.`;
+        } else if (cleanMsg.startsWith("Status code:")) {
+          try {
+            const match = cleanMsg.match(/\{[\s\S]*\}/);
+            if (match) {
+              const parsed = JSON.parse(match[0]);
+              cleanMsg = parsed.message || cleanMsg;
+            }
+          } catch {
           }
-        } catch {
         }
       }
-      console.error(`[Brevo Notification Failed] Status ${statusCode}: ${cleanMsg}`);
+      console.error(`[Brevo Diagnostic] HTTP Status code: ${statusCode}`);
+      console.error(`[Brevo Diagnostic] Email rejected / failed by Brevo: ${cleanMsg}`);
       return {
         sent: false,
+        statusCode,
         error: cleanMsg
       };
     }
@@ -530,8 +681,8 @@ var BrevoService = class {
 var brevoService_default = BrevoService;
 
 // server/models/Report.ts
-import mongoose2, { Schema } from "mongoose";
-var ReportSchema = new Schema(
+import mongoose3, { Schema as Schema2 } from "mongoose";
+var ReportSchema = new Schema2(
   {
     complaintId: { type: String, required: true, unique: true },
     name: { type: String, required: true },
@@ -573,7 +724,7 @@ var ReportSchema = new Schema(
   },
   { timestamps: true }
 );
-var Report = mongoose2.models.Report || mongoose2.model("Report", ReportSchema);
+var Report = mongoose3.models.Report || mongoose3.model("Report", ReportSchema);
 var Report_default = Report;
 
 // server/controllers/reportController.ts
@@ -596,28 +747,33 @@ function toReportResponse(doc) {
   };
 }
 function toBrevoReport(report) {
+  const r = typeof report?.toObject === "function" ? report.toObject() : report || {};
+  const id = String(r._id ?? r.id ?? r.complaintId ?? "");
   return {
-    ...report,
-    _id: String(report._id),
-    id: report.id || String(report._id),
-    complaintId: report.complaintId,
-    name: report.name,
-    email: report.email,
-    locationName: report.locationName,
-    description: report.description || "",
-    title: report.title,
-    category: report.category,
-    department: report.department,
-    photoUrl: report.photoUrl,
-    status: report.status,
-    priority: report.priority,
-    emailNotification: report.emailNotification || { sent: false },
-    createdAt: report.createdAt || /* @__PURE__ */ new Date(),
-    updatedAt: report.updatedAt || /* @__PURE__ */ new Date()
+    ...r,
+    _id: id,
+    id: r.id || id,
+    complaintId: r.complaintId || "",
+    name: r.name || "Citizen Reporter",
+    email: r.email || "",
+    locationName: r.locationName || r.location || "",
+    description: r.description || "",
+    title: r.title || "Civic Issue",
+    category: r.category || "Garbage",
+    department: r.department || r.assignedDepartment || "General Municipal Administration",
+    photoUrl: r.photoUrl || r.img || "",
+    latitude: r.latitude,
+    longitude: r.longitude,
+    contact: r.contact,
+    status: r.status || "Pending",
+    priority: r.priority || "Medium",
+    emailNotification: r.emailNotification || { sent: false },
+    createdAt: r.createdAt || /* @__PURE__ */ new Date(),
+    updatedAt: r.updatedAt || /* @__PURE__ */ new Date()
   };
 }
 async function findReport(id) {
-  if (mongoose3.isValidObjectId(id)) {
+  if (mongoose4.isValidObjectId(id)) {
     const byMongoId = await ReportModel.findById(id).exec();
     if (byMongoId) return byMongoId;
   }
@@ -744,7 +900,7 @@ var ReportController = class {
       await created.save();
       res.status(201).json({
         success: true,
-        message: emailNotification.sent ? "Report saved to MongoDB and email notification accepted by Brevo" : "Report saved to MongoDB, but the email notification could not be sent",
+        message: emailNotification.sent ? "Report saved to MongoDB and email notification accepted by Brevo" : `Report saved to MongoDB, but email notification could not be sent: ${emailNotification.error || "delivery error"}`,
         data: toReportResponse(created),
         emailNotification
       });
@@ -949,7 +1105,7 @@ var ReportController = class {
       await report.save();
       res.status(200).json({
         success: true,
-        message: emailResult.sent ? "Email notification resent successfully" : "Email sending failed",
+        message: emailResult.sent ? "Email notification resent successfully" : `Email delivery failed: ${emailResult.error || "delivery error"}`,
         emailNotification: report.emailNotification
       });
     } catch (error) {
@@ -1161,307 +1317,8 @@ import { Router as Router2 } from "express";
 
 // server/controllers/authController.ts
 import jwt2 from "jsonwebtoken";
-
-// server/services/mockDataService.ts
-var MockDataService = class {
-  constructor() {
-    this.reports = [];
-    this.seedDefaultReports();
-  }
-  /**
-   * Initialize realistic civic reports for demonstration
-   */
-  seedDefaultReports() {
-    const defaultReports = [
-      {
-        _id: "rep-seed-1",
-        id: "rep-seed-1",
-        complaintId: "ECO-10001",
-        title: "Garbage Overflow",
-        category: "Garbage",
-        status: "Pending",
-        locationName: "Sector 4 Market, Main Square",
-        location: "Sector 4 Market, Main Square",
-        latitude: 17.4399,
-        longitude: 78.4982,
-        name: "Alex Walker",
-        user: "Alex Walker",
-        email: "alex.walker@gmail.com",
-        userEmail: "alex.walker@gmail.com",
-        contact: "+91 98765 43210",
-        description: "Severe garbage overflow spilling out of the municipal dustbin with excessive waste and plastic accumulated on the pedestrian pavement.",
-        department: "Sanitation Department",
-        assignedDepartment: "Sanitation Department",
-        priority: "High",
-        photoUrl: "https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?auto=format&fit=crop&q=80&w=1200",
-        photoPublicId: "report-1792070984340-abe79d636034dd90.jpg",
-        img: "https://images.unsplash.com/photo-1611284446314-60a58ac0deb9?auto=format&fit=crop&q=80&w=1200",
-        emailNotification: {
-          sent: true,
-          messageId: "seed-notif-1",
-          attemptedAt: new Date(Date.now() - 36e5 * 24 * 2)
-        },
-        createdAt: new Date(Date.now() - 36e5 * 24 * 2),
-        updatedAt: new Date(Date.now() - 36e5 * 24 * 2)
-      },
-      {
-        _id: "rep-seed-2",
-        id: "rep-seed-2",
-        complaintId: "ECO-10002",
-        title: "Broken Streetlight",
-        category: "Broken Streetlights",
-        status: "Resolved",
-        locationName: "Oak Wood Avenue, Pole #42",
-        location: "Oak Wood Avenue, Pole #42",
-        latitude: 17.4412,
-        longitude: 78.4915,
-        name: "Sarah Jenkins",
-        user: "Sarah Jenkins",
-        email: "sarah.j@gmail.com",
-        userEmail: "sarah.j@gmail.com",
-        contact: "+91 98123 45678",
-        description: "The street light in front of house 42 has been flickering and is now completely out, making the corner dangerous at night.",
-        department: "Electrical Department",
-        assignedDepartment: "Electrical Department",
-        priority: "Medium",
-        resolutionNotes: "Replaced LED bulb assembly and checked underground cabling. Lamp restored.",
-        photoUrl: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=1200",
-        photoPublicId: "report-1792071173419-33e78100399624c2.jpg",
-        img: "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=1200",
-        emailNotification: {
-          sent: true,
-          messageId: "seed-notif-2",
-          attemptedAt: new Date(Date.now() - 36e5 * 24 * 5)
-        },
-        createdAt: new Date(Date.now() - 36e5 * 24 * 5),
-        updatedAt: new Date(Date.now() - 36e5 * 12)
-      },
-      {
-        _id: "rep-seed-3",
-        id: "rep-seed-3",
-        complaintId: "ECO-10003",
-        title: "Dangerous Pothole on 5th Cross Road",
-        category: "Potholes",
-        status: "In Progress",
-        locationName: "5th Cross Road, Near Central Library",
-        location: "5th Cross Road, Near Central Library",
-        latitude: 17.435,
-        longitude: 78.489,
-        name: "Marcus Vance",
-        user: "Marcus Vance",
-        email: "marcus.v@ecocity.org",
-        userEmail: "marcus.v@ecocity.org",
-        description: "Deep road depression causing two-wheelers to swerve dangerously during peak evening hours.",
-        department: "Public Works Department",
-        assignedDepartment: "Public Works Department",
-        priority: "High",
-        photoUrl: "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&q=80&w=1200",
-        photoPublicId: "report-1792071909470-602d96b2ea54128d.jpg",
-        img: "https://images.unsplash.com/photo-1515162816999-a0c47dc192f7?auto=format&fit=crop&q=80&w=1200",
-        emailNotification: {
-          sent: true,
-          messageId: "seed-notif-3",
-          attemptedAt: new Date(Date.now() - 36e5 * 24 * 1)
-        },
-        createdAt: new Date(Date.now() - 36e5 * 24 * 1),
-        updatedAt: new Date(Date.now() - 36e5 * 4)
-      },
-      {
-        _id: "rep-seed-4",
-        id: "rep-seed-4",
-        complaintId: "ECO-10004",
-        title: "Water Leakage from Main Supply Pipe",
-        category: "Water Leakage",
-        status: "Pending",
-        locationName: "Riverside Boulevard, Near Block 3",
-        location: "Riverside Boulevard, Near Block 3",
-        latitude: 17.448,
-        longitude: 78.502,
-        name: "Priya Sharma",
-        user: "Priya Sharma",
-        email: "priya.sharma@gmail.com",
-        userEmail: "priya.sharma@gmail.com",
-        description: "Continuous clean water escaping from joint in distribution main, flooding adjacent walking path.",
-        department: "Water Department",
-        assignedDepartment: "Water Department",
-        priority: "Medium",
-        photoUrl: "https://images.unsplash.com/photo-1542013936693-884638332954?auto=format&fit=crop&q=80&w=1200",
-        photoPublicId: "report-1792075974281-1f975a02bfb931c5.jpg",
-        img: "https://images.unsplash.com/photo-1542013936693-884638332954?auto=format&fit=crop&q=80&w=1200",
-        emailNotification: {
-          sent: true,
-          messageId: "seed-notif-4",
-          attemptedAt: new Date(Date.now() - 36e5 * 10)
-        },
-        createdAt: new Date(Date.now() - 36e5 * 10),
-        updatedAt: new Date(Date.now() - 36e5 * 10)
-      }
-    ];
-    this.reports = defaultReports;
-  }
-  // ==========================================
-  // Administrator In-Memory Management
-  // ==========================================
-  getAdminConfig() {
-    return {
-      email: (process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim().toLowerCase(),
-      password: (process.env.ADMIN_PASSWORD || "likitha123").trim(),
-      name: (process.env.ADMIN_NAME || "EcoCity Administrator").trim()
-    };
-  }
-  validateAdminCredentials(emailInput, passwordInput) {
-    if (!emailInput || !passwordInput) return null;
-    const config = this.getAdminConfig();
-    const normalizedInput = emailInput.trim().toLowerCase();
-    if (normalizedInput === config.email && passwordInput.trim() === config.password) {
-      return {
-        id: "admin-master-1",
-        _id: "admin-master-1",
-        name: config.name,
-        email: config.email,
-        role: "admin",
-        createdAt: /* @__PURE__ */ new Date("2026-01-01T00:00:00.000Z")
-      };
-    }
-    return null;
-  }
-  getAdminById(id) {
-    const config = this.getAdminConfig();
-    return {
-      id: id || "admin-master-1",
-      _id: id || "admin-master-1",
-      name: config.name,
-      email: config.email,
-      role: "admin",
-      createdAt: /* @__PURE__ */ new Date("2026-01-01T00:00:00.000Z")
-    };
-  }
-  // ==========================================
-  // Reports In-Memory Management
-  // ==========================================
-  createReport(data) {
-    const timestamp = Date.now().toString().slice(-6);
-    const randomNum = Math.floor(1e3 + Math.random() * 9e3);
-    const complaintId = data.complaintId || `ECO-${timestamp}-${randomNum}`;
-    const id = `report-${Date.now()}-${randomNum}`;
-    const now = /* @__PURE__ */ new Date();
-    const report = {
-      _id: id,
-      id,
-      complaintId,
-      name: data.name,
-      user: data.name,
-      email: data.email.toLowerCase(),
-      userEmail: data.email.toLowerCase(),
-      locationName: data.locationName,
-      location: data.locationName,
-      latitude: data.latitude,
-      longitude: data.longitude,
-      description: data.description || "",
-      title: data.title || `Issue at ${data.locationName}`,
-      category: data.category || "Garbage",
-      department: data.department || "Sanitation Department",
-      assignedDepartment: data.assignedDepartment || data.department || "Sanitation Department",
-      contact: data.contact,
-      photoUrl: data.photoUrl,
-      photoPublicId: data.photoPublicId,
-      img: data.photoUrl,
-      status: data.status || "Pending",
-      priority: data.priority || "Medium",
-      emailNotification: {
-        sent: false,
-        attemptedAt: now
-      },
-      createdAt: now,
-      updatedAt: now
-    };
-    this.reports.unshift(report);
-    return report;
-  }
-  getAllReports(filter) {
-    let result = [...this.reports];
-    if (filter.status && filter.status !== "All") {
-      result = result.filter((r) => r.status.toLowerCase() === filter.status.toLowerCase());
-    }
-    if (filter.category && filter.category !== "All") {
-      result = result.filter((r) => r.category.toLowerCase() === filter.category.toLowerCase());
-    }
-    if (filter.search && filter.search.trim() !== "") {
-      const q = filter.search.trim().toLowerCase();
-      result = result.filter(
-        (r) => r.complaintId.toLowerCase().includes(q) || r.title.toLowerCase().includes(q) || r.locationName.toLowerCase().includes(q) || r.name.toLowerCase().includes(q) || r.email.toLowerCase().includes(q) || r.description.toLowerCase().includes(q)
-      );
-    }
-    if (filter.sort === "oldest") {
-      result.sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime());
-    } else {
-      result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-    }
-    const total = result.length;
-    const page = Math.max(1, filter.page || 1);
-    const limit = Math.max(1, Math.min(100, filter.limit || 20));
-    const skip = (page - 1) * limit;
-    const pagedReports = result.slice(skip, skip + limit);
-    return {
-      reports: pagedReports,
-      total,
-      page,
-      limit,
-      pages: Math.ceil(total / limit)
-    };
-  }
-  getPublicRecentReports(limit = 10) {
-    const sorted = [...this.reports].sort(
-      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
-    );
-    const sliced = sorted.slice(0, limit);
-    return sliced.map((r) => {
-      const { email, contact, userEmail, ...sanitized } = r;
-      return sanitized;
-    });
-  }
-  getReportById(id) {
-    if (!id) return null;
-    const cleanId = String(id).trim().toLowerCase();
-    const found = this.reports.find(
-      (r) => r._id.toLowerCase() === cleanId || r.id.toLowerCase() === cleanId || r.complaintId.toLowerCase() === cleanId
-    );
-    return found || null;
-  }
-  updateReportStatus(id, updates) {
-    const report = this.getReportById(id);
-    if (!report) return null;
-    if (updates.status) report.status = updates.status;
-    if (updates.notes !== void 0) report.resolutionNotes = updates.notes;
-    if (updates.assignedDepartment !== void 0) {
-      report.assignedDepartment = updates.assignedDepartment;
-      report.department = updates.assignedDepartment;
-    }
-    if (updates.priority) report.priority = updates.priority;
-    if (updates.resolutionImage) report.resolutionImage = updates.resolutionImage;
-    report.updatedAt = /* @__PURE__ */ new Date();
-    return report;
-  }
-  updateEmailNotification(id, emailNotification) {
-    const report = this.getReportById(id);
-    if (report) {
-      report.emailNotification = emailNotification;
-    }
-  }
-  getStats() {
-    return {
-      total: this.reports.length,
-      pending: this.reports.filter((r) => r.status === "Pending").length,
-      inProgress: this.reports.filter((r) => r.status === "In Progress").length,
-      resolved: this.reports.filter((r) => r.status === "Resolved").length,
-      rejected: this.reports.filter((r) => r.status === "Rejected").length
-    };
-  }
-};
-var mockDataService = new MockDataService();
-var mockDataService_default = mockDataService;
-
-// server/controllers/authController.ts
+import bcrypt2 from "bcryptjs";
+import mongoose5 from "mongoose";
 var AuthController = class {
   /**
    * Administrator Login
@@ -1470,15 +1327,34 @@ var AuthController = class {
   static async login(req, res, next) {
     try {
       const { email, password } = req.body;
-      if (!email || !password) {
+      const normalizedEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+      const rawPassword = typeof password === "string" ? password.trim() : "";
+      if (!normalizedEmail || !rawPassword) {
         res.status(400).json({
           success: false,
           message: "Both email and password are required"
         });
         return;
       }
-      const admin = mockDataService_default.validateAdminCredentials(email, password);
-      if (!admin) {
+      let admin = await Admin_default.findOne({ email: normalizedEmail }).exec();
+      let isValid = false;
+      if (admin) {
+        isValid = await admin.comparePassword(rawPassword);
+      } else {
+        const envEmail = (process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim().toLowerCase();
+        const envPassword = (process.env.ADMIN_PASSWORD || "likitha123").trim();
+        if (normalizedEmail === envEmail && rawPassword === envPassword) {
+          const hashedPassword = await bcrypt2.hash(rawPassword, 10);
+          admin = await Admin_default.create({
+            name: process.env.ADMIN_NAME || "EcoCity Administrator",
+            email: envEmail,
+            password: hashedPassword,
+            role: "admin"
+          });
+          isValid = true;
+        }
+      }
+      if (!admin || !isValid) {
         res.status(401).json({
           success: false,
           message: "Invalid administrator email or password"
@@ -1488,7 +1364,7 @@ var AuthController = class {
       const jwtSecret = process.env.JWT_SECRET || "ecocity-default-jwt-secret-key-change-in-production";
       const token = jwt2.sign(
         {
-          id: admin.id,
+          id: String(admin._id || admin.id),
           email: admin.email,
           role: admin.role
         },
@@ -1500,7 +1376,7 @@ var AuthController = class {
         message: "Admin authentication successful",
         token,
         admin: {
-          id: admin.id,
+          id: String(admin._id || admin.id),
           name: admin.name,
           email: admin.email,
           role: admin.role
@@ -1523,11 +1399,17 @@ var AuthController = class {
         });
         return;
       }
-      const admin = mockDataService_default.getAdminById(req.user.id);
+      let admin = null;
+      if (mongoose5.isValidObjectId(req.user.id)) {
+        admin = await Admin_default.findById(req.user.id).exec();
+      }
+      if (!admin && req.user.email) {
+        admin = await Admin_default.findOne({ email: req.user.email }).exec();
+      }
       res.status(200).json({
         success: true,
         user: {
-          id: admin ? admin.id : req.user.id,
+          id: admin ? String(admin._id || admin.id) : req.user.id,
           name: admin ? admin.name : "EcoCity Administrator",
           email: admin ? admin.email : req.user.email,
           role: "admin"
@@ -1608,6 +1490,7 @@ var errorHandler_default = errorHandler;
 // server/adminAuth.ts
 import { Router as Router3 } from "express";
 import jwt3 from "jsonwebtoken";
+import bcrypt3 from "bcryptjs";
 var router3 = Router3();
 var getJwtSecret = () => {
   return process.env.JWT_SECRET || "ecocity-default-jwt-secret-key-change-in-production";
@@ -1615,15 +1498,32 @@ var getJwtSecret = () => {
 router3.post("/login", async (req, res) => {
   try {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
-    const password = typeof req.body?.password === "string" ? req.body.password : "";
+    const password = typeof req.body?.password === "string" ? req.body.password.trim() : "";
     if (!email || !password) {
       return res.status(400).json({
         success: false,
         message: "Both email and password are required"
       });
     }
-    const admin = mockDataService_default.validateAdminCredentials(email, password);
-    if (!admin) {
+    let admin = await Admin_default.findOne({ email }).exec();
+    let isValid = false;
+    if (admin) {
+      isValid = await admin.comparePassword(password);
+    } else {
+      const envEmail = (process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim().toLowerCase();
+      const envPassword = (process.env.ADMIN_PASSWORD || "likitha123").trim();
+      if (email === envEmail && password === envPassword) {
+        const hashedPassword = await bcrypt3.hash(password, 10);
+        admin = await Admin_default.create({
+          name: process.env.ADMIN_NAME || "EcoCity Administrator",
+          email: envEmail,
+          password: hashedPassword,
+          role: "admin"
+        });
+        isValid = true;
+      }
+    }
+    if (!admin || !isValid) {
       return res.status(401).json({
         success: false,
         message: "Invalid administrator email or password"
@@ -1632,7 +1532,7 @@ router3.post("/login", async (req, res) => {
     const secret = getJwtSecret();
     const token = jwt3.sign(
       {
-        id: admin.id,
+        id: String(admin._id || admin.id),
         role: "admin",
         email: admin.email
       },
@@ -1644,7 +1544,7 @@ router3.post("/login", async (req, res) => {
       message: "Login successful",
       token,
       admin: {
-        id: admin.id,
+        id: String(admin._id || admin.id),
         name: admin.name,
         email: admin.email,
         role: admin.role
@@ -1751,11 +1651,11 @@ app.get(
   }
 );
 var healthHandler = (_req, res) => {
-  const connected = mongoose4.connection.readyState === 1;
+  const connected = mongoose6.connection.readyState === 1;
   res.status(connected ? 200 : 503).json({
     status: connected ? "healthy" : "unavailable",
     database: connected ? "MongoDB connected" : "MongoDB disconnected",
-    databaseName: connected ? mongoose4.connection.name : null,
+    databaseName: connected ? mongoose6.connection.name : null,
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     uptime: process.uptime(),
     environment: process.env.NODE_ENV || (isServerless2 ? "production" : "development")
@@ -1804,18 +1704,18 @@ app.use(errorHandler_default);
 async function startServer() {
   try {
     await db_default();
-    const adminConfig = mockDataService_default.getAdminConfig();
+    const adminEmail = (process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim();
     const server = app.listen(PORT, () => {
       console.log("\n==============================================");
       console.log(" EcoCity Smart Civic Issue Reporting Backend");
       console.log(" Mode: MongoDB");
-      console.log(` Database: ${mongoose4.connection.name}`);
+      console.log(` Database: ${mongoose6.connection.name}`);
       console.log(` Port: http://localhost:${PORT}`);
       console.log(` Health: http://localhost:${PORT}/api/health`);
       console.log(` Reports: http://localhost:${PORT}/api/reports`);
-      console.log(` Admin Email: ${adminConfig.email}`);
+      console.log(` Admin Email: ${adminEmail}`);
       console.log(
-        ` Brevo Email: ${process.env.BREVO_API_KEY ? "Configured" : "Missing BREVO_API_KEY"}`
+        ` Brevo Email: ${process.env.BREVO_API_KEY || process.env.SENDINBLUE_API_KEY || process.env.BREVO_KEY ? "Configured" : "Missing BREVO_API_KEY"}`
       );
       console.log("==============================================\n");
     });

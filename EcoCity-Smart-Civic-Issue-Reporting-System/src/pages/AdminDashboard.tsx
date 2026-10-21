@@ -92,27 +92,17 @@ export function AdminDashboard() {
     if (stored) {
       try {
         const parsed = JSON.parse(stored);
-        let updated = false;
-        const cleaned = parsed.map((r: UnifiedReport) => {
-          if (r.category === "Broken Streetlights") {
-            updated = true;
-            return { ...r, img: brokenStreetlightImg };
-          }
-          if (r.category === "Garbage" || r.id === 1 || r.title.toLowerCase().includes("garbage")) {
-            updated = true;
-            return { ...r, title: "Garbage Overflow", img: garbageOverflowImg };
-          }
-          return r;
-        });
-        if (updated) {
-          localStorage.setItem("ecocity_reports", JSON.stringify(cleaned));
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return parsed.map((r: UnifiedReport) => ({
+            ...r,
+            img: normalizeReportImageUrl(r.img || (r as any).photoUrl, r.category)
+          }));
         }
-        return cleaned;
       } catch (e) {
-        return DEFAULT_REPORTS;
+        return [];
       }
     }
-    return DEFAULT_REPORTS;
+    return [];
   });
 
   // State for live refresh
@@ -590,7 +580,7 @@ export function AdminDashboard() {
           {/* TAB 1: MANAGE COMPLAINTS */}
           {activeTab === 'reports' && (
             <>
-              {/* In-Memory Mock Mode Banner */}
+              {/* MongoDB Atlas Mode Banner */}
               <div className="bg-teal/5 border border-teal/10 rounded-2xl p-4 flex gap-3 items-start shadow-xs">
                 <div className="p-1 bg-teal/10 rounded-lg text-teal flex-shrink-0">
                   <ShieldCheck className="w-4 h-4" />
@@ -598,12 +588,12 @@ export function AdminDashboard() {
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <h4 className="font-semibold text-xs text-charcoal mb-0.5 font-sans">
-                      Centralized In-Memory Mock Store Active
+                      MongoDB Atlas Connected — Persistent Civic Issue Registry
                     </h4>
-                    <span className="text-[10px] bg-teal/10 text-teal px-2 py-0.5 rounded-full font-medium">Database-Free</span>
+                    <span className="text-[10px] bg-teal/10 text-teal px-2 py-0.5 rounded-full font-medium">MongoDB Atlas</span>
                   </div>
                   <p className="text-[11px] text-charcoal-light leading-normal">
-                    The admin dashboard is synchronized in real time with the backend in-memory mock-data service. Civic complaints submitted by citizens appear here immediately. (Limitation: in-memory data resets when the backend server restarts).
+                    The admin dashboard is synchronized directly with MongoDB Atlas. All submitted civic reports, citizen details, and photographic evidence are permanently stored and persist across backend restarts.
                   </p>
                 </div>
               </div>

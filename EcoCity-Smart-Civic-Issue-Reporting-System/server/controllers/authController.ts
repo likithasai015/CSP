@@ -1,7 +1,9 @@
 import { Request, Response, NextFunction } from 'express';
 import jwt from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
+import mongoose from 'mongoose';
 import { AuthRequest } from '../middleware/auth.js';
-import mockDataService from '../services/mockDataService.js';
+import Admin from '../models/Admin.js';
 
 export class AuthController {
   /**
@@ -15,8 +17,12 @@ export class AuthController {
   ): Promise<void> {
     try {
       const { email, password } = req.body;
+      const normalizedEmail =
+        typeof email === 'string' ? email.trim().toLowerCase() : '';
+      const rawPassword =
+        typeof password === 'string' ? password.trim() : '';
 
-      if (!email || !password) {
+      if (!normalizedEmail || !rawPassword) {
         res.status(400).json({
           success: false,
           message: 'Both email and password are required'
@@ -24,9 +30,35 @@ export class AuthController {
         return;
       }
 
-      const admin = mockDataService.validateAdminCredentials(email, password);
+      // 1. Look up admin in MongoDB
+      let admin = await Admin.findOne({ email: normalizedEmail }).exec();
+      let isValid = false;
 
-      if (!admin) {
+      if (admin) {
+        isValid = await admin.comparePassword(rawPassword);
+      } else {
+        // Fallback for initial account provisioning if not yet seeded
+        const envEmail = (
+          process.env.ADMIN_EMAIL || 'likithamindi024@gmail.com'
+        )
+          .trim()
+          .toLowerCase();
+
+        const envPassword = (process.env.ADMIN_PASSWORD || 'likitha123').trim();
+
+        if (normalizedEmail === envEmail && rawPassword === envPassword) {
+          const hashedPassword = await bcrypt.hash(rawPassword, 10);
+          admin = await Admin.create({
+            name: process.env.ADMIN_NAME || 'EcoCity Administrator',
+            email: envEmail,
+            password: hashedPassword,
+            role: 'admin'
+          });
+          isValid = true;
+        }
+      }
+
+      if (!admin || !isValid) {
         res.status(401).json({
           success: false,
           message: 'Invalid administrator email or password'
@@ -35,11 +67,12 @@ export class AuthController {
       }
 
       const jwtSecret =
-        process.env.JWT_SECRET || 'ecocity-default-jwt-secret-key-change-in-production';
+        process.env.JWT_SECRET ||
+        'ecocity-default-jwt-secret-key-change-in-production';
 
       const token = jwt.sign(
         {
-          id: admin.id,
+          id: String(admin._id || admin.id),
           email: admin.email,
           role: admin.role
         },
@@ -52,7 +85,7 @@ export class AuthController {
         message: 'Admin authentication successful',
         token,
         admin: {
-          id: admin.id,
+          id: String(admin._id || admin.id),
           name: admin.name,
           email: admin.email,
           role: admin.role
@@ -81,12 +114,18 @@ export class AuthController {
         return;
       }
 
-      const admin = mockDataService.getAdminById(req.user.id);
+      let admin: any = null;
+      if (mongoose.isValidObjectId(req.user.id)) {
+        admin = await Admin.findById(req.user.id).exec();
+      }
+      if (!admin && req.user.email) {
+        admin = await Admin.findOne({ email: req.user.email }).exec();
+      }
 
       res.status(200).json({
         success: true,
         user: {
-          id: admin ? admin.id : req.user.id,
+          id: admin ? String(admin._id || admin.id) : req.user.id,
           name: admin ? admin.name : 'EcoCity Administrator',
           email: admin ? admin.email : req.user.email,
           role: 'admin'

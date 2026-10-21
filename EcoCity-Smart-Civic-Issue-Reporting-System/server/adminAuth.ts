@@ -1,6 +1,7 @@
 import { Router, Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import mockDataService from "./services/mockDataService.js";
+import bcrypt from "bcryptjs";
+import Admin from "./models/Admin.js";
 
 const router = Router();
 
@@ -17,7 +18,7 @@ router.post("/login", async (req: Request, res: Response) => {
 
     const password =
       typeof req.body?.password === "string"
-        ? req.body.password
+        ? req.body.password.trim()
         : "";
 
     if (!email || !password) {
@@ -27,9 +28,35 @@ router.post("/login", async (req: Request, res: Response) => {
       });
     }
 
-    const admin = mockDataService.validateAdminCredentials(email, password);
+    // Look up administrator in MongoDB
+    let admin = await Admin.findOne({ email }).exec();
+    let isValid = false;
 
-    if (!admin) {
+    if (admin) {
+      isValid = await admin.comparePassword(password);
+    } else {
+      // Fallback for initial account provisioning if not yet seeded
+      const envEmail = (
+        process.env.ADMIN_EMAIL || "likithamindi024@gmail.com"
+      )
+        .trim()
+        .toLowerCase();
+
+      const envPassword = (process.env.ADMIN_PASSWORD || "likitha123").trim();
+
+      if (email === envEmail && password === envPassword) {
+        const hashedPassword = await bcrypt.hash(password, 10);
+        admin = await Admin.create({
+          name: process.env.ADMIN_NAME || "EcoCity Administrator",
+          email: envEmail,
+          password: hashedPassword,
+          role: "admin",
+        });
+        isValid = true;
+      }
+    }
+
+    if (!admin || !isValid) {
       return res.status(401).json({
         success: false,
         message: "Invalid administrator email or password",
@@ -39,7 +66,7 @@ router.post("/login", async (req: Request, res: Response) => {
     const secret = getJwtSecret();
     const token = jwt.sign(
       {
-        id: admin.id,
+        id: String(admin._id || admin.id),
         role: "admin",
         email: admin.email,
       },
@@ -52,7 +79,7 @@ router.post("/login", async (req: Request, res: Response) => {
       message: "Login successful",
       token,
       admin: {
-        id: admin.id,
+        id: String(admin._id || admin.id),
         name: admin.name,
         email: admin.email,
         role: admin.role,

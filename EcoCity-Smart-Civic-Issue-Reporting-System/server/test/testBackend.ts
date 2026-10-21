@@ -5,14 +5,13 @@ import axios from 'axios';
 import fs from 'fs';
 import path from 'path';
 import FormData from 'form-data';
-import mockDataService from '../services/mockDataService.js';
 import { startServer } from '../index.js';
 
 const BASE_URL = 'http://localhost:5000';
 
 async function runTests() {
   console.log('\n======================================================');
-  console.log('    EcoCity Database-Free Backend Verification Suite   ');
+  console.log('    EcoCity MongoDB-Backed Backend Verification Suite   ');
   console.log('======================================================\n');
 
   let server: any;
@@ -38,7 +37,7 @@ async function runTests() {
       }
     } catch {
       server = await startServer();
-      console.log('[Setup] Server started in database-free mock mode on port 5000\n');
+      console.log('[Setup] Server started in MongoDB mode on port 5000\n');
     }
 
     // 2. Health check
@@ -48,8 +47,8 @@ async function runTests() {
       '1. GET /api/health returns 200 and status: healthy'
     );
     assert(
-      healthRes.data.database?.includes('database-free'),
-      '2. Health response confirms database-free mock mode'
+      healthRes.data.database?.includes('MongoDB connected'),
+      '2. Health response confirms MongoDB connected'
     );
 
     // 3. Test missing required fields on POST /api/reports
@@ -160,10 +159,10 @@ async function runTests() {
     const createdComplaintId = submitRes.data.data.complaintId;
     const createdReportId = submitRes.data.data._id || submitRes.data.data.id;
 
-    // 8. Verify report is persisted in mockDataService
+    // 8. Verify report is persisted in MongoDB Atlas
     const verifyHttpReport = await axios.get(`${BASE_URL}/api/reports/${createdReportId}`);
-    assert(!!verifyHttpReport.data?.data, '15. Report record exists in centralized in-memory mock-data store');
-    assert(verifyHttpReport.data.data.email === 'citizen.test@ecocity.org', '16. Citizen email stored accurately in mock store');
+    assert(!!verifyHttpReport.data?.data, '15. Report record exists in MongoDB collection');
+    assert(verifyHttpReport.data.data.email === 'citizen.test@ecocity.org', '16. Citizen email stored accurately in MongoDB document');
 
     // 9. Test GET /api/reports/:id (Lookup single report)
     const singleRes = await axios.get(`${BASE_URL}/api/reports/${createdComplaintId}`);
@@ -208,7 +207,7 @@ async function runTests() {
       );
     }
 
-    // 13. Test successful Admin login with dummy credentials
+    // 13. Test successful Admin login with configured credentials
     const loginRes = await axios.post(`${BASE_URL}/api/auth/login`, {
       email: 'likithamindi024@gmail.com',
       password: 'likitha123'
@@ -252,12 +251,12 @@ async function runTests() {
       '25. Authorized PATCH /api/reports/:id/status updates status to In Progress'
     );
 
-    // 17. Verify status update in centralized mock store
+    // 17. Verify status update in MongoDB
     const verifyUpdatedReport = await axios.get(`${BASE_URL}/api/reports/${createdReportId}`);
     assert(
       verifyUpdatedReport.data.data.status === 'In Progress' &&
         verifyUpdatedReport.data.data.resolutionNotes === 'Sanitation unit dispatched to site',
-      '26. Status update verified in centralized in-memory mock store'
+      '26. Status update verified in MongoDB collection'
     );
 
     // 18. Test public recent reports endpoint
@@ -267,7 +266,7 @@ async function runTests() {
       '27. GET /api/reports/public/recent returns sanitized list'
     );
     assert(
-      publicRecentRes.data.data[0].email === undefined,
+      publicRecentRes.data.data.length > 0 && publicRecentRes.data.data[0].email === undefined,
       '28. Public recent reports sanitize citizen personal email for privacy'
     );
 

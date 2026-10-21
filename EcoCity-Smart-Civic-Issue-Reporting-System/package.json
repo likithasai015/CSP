@@ -12,7 +12,8 @@
     "build:api": "esbuild serverless/index.ts --bundle --platform=node --format=esm --packages=external --outfile=api/index.js",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js uploads/*",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "test:brevo": "tsx server/test/testBrevo.ts"
   },
   "dependencies": {
     "@getbrevo/brevo": "^6.1.0",

@@ -31,24 +31,30 @@ function toReportResponse(doc: any): any {
 
 // Adapt MongoDB documents to the shape expected by the existing Brevo service.
 function toBrevoReport(report: any): IReportData {
+  const r = typeof report?.toObject === 'function' ? report.toObject() : report || {};
+  const id = String(r._id ?? r.id ?? r.complaintId ?? '');
+
   return {
-    ...report,
-    _id: String(report._id),
-    id: report.id || String(report._id),
-    complaintId: report.complaintId,
-    name: report.name,
-    email: report.email,
-    locationName: report.locationName,
-    description: report.description || '',
-    title: report.title,
-    category: report.category,
-    department: report.department,
-    photoUrl: report.photoUrl,
-    status: report.status,
-    priority: report.priority,
-    emailNotification: report.emailNotification || { sent: false },
-    createdAt: report.createdAt || new Date(),
-    updatedAt: report.updatedAt || new Date()
+    ...r,
+    _id: id,
+    id: r.id || id,
+    complaintId: r.complaintId || '',
+    name: r.name || 'Citizen Reporter',
+    email: r.email || '',
+    locationName: r.locationName || r.location || '',
+    description: r.description || '',
+    title: r.title || 'Civic Issue',
+    category: r.category || 'Garbage',
+    department: r.department || r.assignedDepartment || 'General Municipal Administration',
+    photoUrl: r.photoUrl || r.img || '',
+    latitude: r.latitude,
+    longitude: r.longitude,
+    contact: r.contact,
+    status: r.status || 'Pending',
+    priority: r.priority || 'Medium',
+    emailNotification: r.emailNotification || { sent: false },
+    createdAt: r.createdAt || new Date(),
+    updatedAt: r.updatedAt || new Date()
   } as IReportData;
 }
 
@@ -241,7 +247,7 @@ export class ReportController {
         success: true,
         message: emailNotification.sent
           ? 'Report saved to MongoDB and email notification accepted by Brevo'
-          : 'Report saved to MongoDB, but the email notification could not be sent',
+          : `Report saved to MongoDB, but email notification could not be sent: ${emailNotification.error || 'delivery error'}`,
         data: toReportResponse(created),
         emailNotification
       });
@@ -522,7 +528,7 @@ export class ReportController {
         success: true,
         message: emailResult.sent
           ? 'Email notification resent successfully'
-          : 'Email sending failed',
+          : `Email delivery failed: ${emailResult.error || 'delivery error'}`,
         emailNotification: report.emailNotification
       });
     } catch (error) {

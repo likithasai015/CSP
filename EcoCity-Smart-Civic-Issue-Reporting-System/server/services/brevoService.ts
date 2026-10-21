@@ -6,6 +6,7 @@ import { IReportData } from './mockDataService.js';
 export interface BrevoSendResult {
   sent: boolean;
   messageId?: string;
+  statusCode?: number;
   error?: string;
 }
 
@@ -20,12 +21,71 @@ function escapeHtml(str: string | undefined | null): string {
 }
 
 export class BrevoService {
-  private static getClient(): BrevoClient | null {
-    const apiKey = process.env.BREVO_API_KEY;
-    if (!apiKey || apiKey.trim() === '' || apiKey === 'your_brevo_api_key_here') {
+  /**
+   * Safely retrieve the Brevo API key from supported environment variables,
+   * stripping extraneous whitespace or surrounding quotes.
+   */
+  public static getApiKey(): string {
+    const rawKey =
+      process.env.BREVO_API_KEY ||
+      process.env.SENDINBLUE_API_KEY ||
+      process.env.BREVO_KEY ||
+      process.env.BREVO_APIKEY ||
+      '';
+    return rawKey.trim().replace(/^["']|["']$/g, '');
+  }
+
+  /**
+   * Check whether a non-dummy Brevo API key is available.
+   */
+  public static isConfigured(): boolean {
+    const key = this.getApiKey();
+    return Boolean(key && key !== 'your_brevo_api_key_here' && !key.startsWith('xkeysib-your_'));
+  }
+
+  /**
+   * Retrieve the admin recipient email. Defaults to likithamindi024@gmail.com.
+   */
+  public static getAdminEmail(): string {
+    const raw =
+      process.env.ADMIN_NOTIFICATION_EMAIL ||
+      process.env.ADMIN_EMAIL ||
+      '';
+    const cleaned = raw.trim().replace(/^["']|["']$/g, '');
+    if (!cleaned || cleaned.includes('yourdomain.com') || cleaned.includes('example.com')) {
+      return 'likithamindi024@gmail.com';
+    }
+    return cleaned;
+  }
+
+  /**
+   * Retrieve the verified Brevo sender email. Defaults to likithamindi024@gmail.com.
+   */
+  public static getSenderEmail(): string {
+    const raw = process.env.BREVO_SENDER_EMAIL || '';
+    const cleaned = raw.trim().replace(/^["']|["']$/g, '');
+    if (!cleaned || cleaned.includes('yourdomain.com') || cleaned.includes('example.com')) {
+      return 'likithamindi024@gmail.com';
+    }
+    return cleaned;
+  }
+
+  /**
+   * Retrieve the sender display name. Defaults to EcoCity Civic System.
+   */
+  public static getSenderName(): string {
+    const raw = process.env.BREVO_SENDER_NAME || '';
+    const cleaned = raw.trim().replace(/^["']|["']$/g, '');
+    return cleaned || 'EcoCity Civic System';
+  }
+
+  private static getClient(apiKey: string): BrevoClient | null {
+    if (!apiKey) return null;
+    try {
+      return new BrevoClient({ apiKey });
+    } catch {
       return null;
     }
-    return new BrevoClient({ apiKey: apiKey.trim() });
   }
 
   /**
@@ -320,13 +380,18 @@ export class BrevoService {
         report.photoUrl
           ? `<div class="card">
               <div class="card-title">&bull; Photographic Evidence</div>
-              <p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded photo taken at the incident location:</p>
-              <div class="image-container">
-                <img src="${report.photoUrl}" alt="Civic Issue Evidence" />
-              </div>
-              ${report.photoUrl.startsWith('data:')
-                ? '<p style="font-size: 12px; color: #64748B; margin-top: 8px;">High-resolution evidence file is attached directly to this email notification.</p>'
-                : `<a href="${report.photoUrl}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`}
+              ${
+                report.photoUrl.startsWith('data:')
+                  ? `<div style="background-color: #F0FDF4; border: 1px solid #BBF7D0; border-radius: 8px; padding: 16px; text-align: center;">
+                      <p style="margin: 0 0 6px 0; font-size: 14px; font-weight: 600; color: #166534;">📎 Incident Photo Attached</p>
+                      <p style="margin: 0; font-size: 12.5px; color: #4B5563;">A high-resolution photograph taken at the incident location is attached directly to this notification email: <strong>evidence-${sanitizedComplaintId}.jpg</strong></p>
+                    </div>`
+                  : `<p style="font-size: 13px; color: #64748B; margin-top: 0;">Uploaded photo taken at the incident location:</p>
+                    <div class="image-container">
+                      <img src="${escapeHtml(report.photoUrl)}" alt="Civic Issue Evidence" />
+                    </div>
+                    <a href="${escapeHtml(report.photoUrl)}" target="_blank" class="view-image-link">Click here to view or download full-size photo &nearr;</a>`
+              }
             </div>`
           : ''
       }
@@ -348,29 +413,27 @@ export class BrevoService {
    * Recipient: likithamindi024@gmail.com
    */
   public static async sendComplaintNotification(report: IReportData): Promise<BrevoSendResult> {
-    dotenv.config({ override: true });
-    const apiKey = process.env.BREVO_API_KEY?.trim();
-    const adminEmail = (
-      process.env.ADMIN_NOTIFICATION_EMAIL ||
-      process.env.ADMIN_EMAIL ||
-      'likithamindi024@gmail.com'
-    ).trim();
-    const senderEmail = (
-      process.env.BREVO_SENDER_EMAIL ||
-      'likithamindi024@gmail.com'
-    ).trim();
-    const senderName = process.env.BREVO_SENDER_NAME?.trim() || 'EcoCity Civic System';
+    const apiKey = this.getApiKey();
+    const adminEmail = this.getAdminEmail();
+    const senderEmail = this.getSenderEmail();
+    const senderName = this.getSenderName();
+
+    console.log('[Brevo Diagnostic] Initiating transactional email dispatch...');
+    console.log(`[Brevo Diagnostic] API Key present: ${Boolean(apiKey && apiKey !== 'your_brevo_api_key_here')}`);
+    console.log(`[Brevo Diagnostic] Sender: ${senderEmail} ("${senderName}")`);
+    console.log(`[Brevo Diagnostic] Recipient: ${adminEmail}`);
+    console.log(`[Brevo Diagnostic] Complaint ID: ${report.complaintId || 'N/A'}`);
 
     // 1. Guard check for configuration
-    if (!apiKey || apiKey === '' || apiKey === 'your_brevo_api_key_here') {
+    if (!this.isConfigured()) {
       const msg = 'Brevo API key is not configured in environment variables (BREVO_API_KEY). Email delivery skipped.';
-      console.warn(`[Brevo Notification] ${msg}`);
+      console.warn(`[Brevo Diagnostic] ${msg}`);
       return { sent: false, error: msg };
     }
 
     if (!adminEmail || adminEmail === '') {
       const msg = 'Administrator recipient email is not configured. Email delivery skipped.';
-      console.warn(`[Brevo Notification] ${msg}`);
+      console.warn(`[Brevo Diagnostic] ${msg}`);
       return { sent: false, error: msg };
     }
 
@@ -391,14 +454,17 @@ export class BrevoService {
           email: adminEmail,
           name: 'EcoCity Administrator'
         }
-      ],
-      replyTo: {
-        email: report.email,
-        name: report.name
-      }
+      ]
     };
 
-    // If photoUrl is an accessible public CDN URL ending with a standard image extension, attach it
+    if (report.email && /^\S+@\S+\.\S+$/.test(report.email)) {
+      emailPayload.replyTo = {
+        email: report.email,
+        name: report.name || 'Citizen Reporter'
+      };
+    }
+
+    // Handle photo attachment safely
     if (
       report.photoUrl &&
       report.photoUrl.startsWith('https://') &&
@@ -409,33 +475,59 @@ export class BrevoService {
       emailPayload.attachment = [
         {
           url: report.photoUrl,
-          name: `report-${report.complaintId}.jpg`
+          name: `evidence-${report.complaintId || 'photo'}.jpg`
         }
       ];
     } else if (report.photoUrl && report.photoUrl.startsWith('data:')) {
-      const match = report.photoUrl.match(/^data:([^;]+);base64,(.+)$/);
-      if (match) {
-        const mimeType = match[1];
-        const base64Content = match[2];
-        const ext = mimeType.includes('png') ? 'png' : mimeType.includes('webp') ? 'webp' : 'jpg';
-        emailPayload.attachment = [
-          {
-            content: base64Content,
-            name: `evidence-${report.complaintId || 'photo'}.${ext}`
-          }
-        ];
+      const commaIndex = report.photoUrl.indexOf(',');
+      if (commaIndex !== -1) {
+        const meta = report.photoUrl.substring(0, commaIndex);
+        const base64Content = report.photoUrl.substring(commaIndex + 1).replace(/\s/g, '');
+        const ext = meta.includes('png') ? 'png' : meta.includes('webp') ? 'webp' : 'jpg';
+
+        // Brevo single attachment limit is 4 MB (approx. 5.3 MB base64 characters)
+        if (base64Content.length <= 5 * 1024 * 1024) {
+          emailPayload.attachment = [
+            {
+              content: base64Content,
+              name: `evidence-${report.complaintId || 'photo'}.${ext}`
+            }
+          ];
+        } else {
+          console.warn(
+            `[Brevo Diagnostic] Evidence photo size (${Math.round(base64Content.length / 1024)} KB) exceeds 4 MB attachment limit; sending notification email without file attachment.`
+          );
+        }
       }
     }
 
-    // 3. Attempt delivery via official BrevoClient or direct REST API v3
+    console.log(`[Brevo Diagnostic] Attachment count: ${emailPayload.attachment ? emailPayload.attachment.length : 0}`);
+
+    // 3. Attempt delivery via official BrevoClient SDK with direct REST API v3 fallback
     try {
-      const client = this.getClient();
+      const client = this.getClient(apiKey);
       let messageId: string | undefined;
+      let statusCode = 201;
+      let accepted = false;
 
       if (client && typeof client.transactionalEmails?.sendTransacEmail === 'function') {
-        const response: any = await client.transactionalEmails.sendTransacEmail(emailPayload);
-        messageId = response?.messageId || response?.body?.messageId || 'brevo-accepted';
-      } else {
+        try {
+          const response: any = await client.transactionalEmails.sendTransacEmail(emailPayload);
+          statusCode = response?.rawResponse?.status || 201;
+          messageId =
+            response?.data?.messageId ||
+            (Array.isArray(response?.data?.messageIds) && response.data.messageIds[0]) ||
+            response?.messageId ||
+            response?.body?.messageId;
+          accepted = true;
+        } catch (sdkError: any) {
+          console.warn(
+            `[Brevo Diagnostic] Brevo SDK attempt returned: ${sdkError.message || 'error'}. Attempting REST API fallback...`
+          );
+        }
+      }
+
+      if (!accepted) {
         const response = await axios.post('https://api.brevo.com/v3/smtp/email', emailPayload, {
           headers: {
             'api-key': apiKey,
@@ -444,40 +536,62 @@ export class BrevoService {
           },
           timeout: 15000
         });
-        messageId = response.data?.messageId || 'brevo-accepted';
+        statusCode = response.status;
+        messageId =
+          response.data?.messageId ||
+          (Array.isArray(response.data?.messageIds) && response.data.messageIds[0]) ||
+          'brevo-accepted';
+        accepted = true;
       }
 
-      console.log(`[Brevo Notification] Successfully accepted by Brevo for delivery to ${adminEmail}. Message ID: ${messageId}`);
+      const finalMessageId = messageId || 'brevo-accepted';
+      console.log(`[Brevo Diagnostic] HTTP Status code: ${statusCode}`);
+      console.log(`[Brevo Diagnostic] Brevo Message ID: ${finalMessageId}`);
+      console.log(`[Brevo Diagnostic] Request successfully accepted by Brevo for delivery to ${adminEmail}. Note: Final delivery is processed asynchronously by Brevo SMTP relay servers.`);
+
       return {
         sent: true,
-        messageId
+        messageId: finalMessageId,
+        statusCode
       };
     } catch (error: any) {
       const statusCode =
         error.statusCode ||
         error.status ||
         error.response?.status ||
-        (String(error.message).includes('403') ? 403 : 500);
+        (String(error.message).includes('403') ? 403 : String(error.message).includes('401') ? 401 : 500);
 
-      let cleanMsg = error.body?.message || error.response?.data?.message || error.message || 'Unknown Brevo error';
-      if (typeof cleanMsg === 'string' && cleanMsg.includes('transactional.email')) {
-        cleanMsg = 'API key is not authorized for resource "transactional.email" (permission_denied). In Brevo Dashboard -> Settings -> SMTP & API -> API Keys, generate a key with Transactional Email permissions.';
-      } else if (typeof cleanMsg === 'string' && cleanMsg.startsWith('Status code:')) {
-        try {
-          const match = cleanMsg.match(/\{[\s\S]*\}/);
-          if (match) {
-            const parsed = JSON.parse(match[0]);
-            cleanMsg = parsed.message || cleanMsg;
+      let cleanMsg =
+        error.response?.data?.message ||
+        error.body?.message ||
+        (typeof error.body === 'string' ? error.body : null) ||
+        error.message ||
+        'Unknown Brevo error';
+
+      if (typeof cleanMsg === 'string') {
+        if (cleanMsg.includes('transactional.email')) {
+          cleanMsg = 'API key is not authorized for resource "transactional.email" (permission_denied). In Brevo Dashboard -> Settings -> SMTP & API -> API Keys, generate a key with Transactional Email permissions.';
+        } else if (cleanMsg.includes('sender') && (cleanMsg.includes('unverified') || cleanMsg.includes('not exist') || cleanMsg.includes('invalid'))) {
+          cleanMsg = `Sender email "${senderEmail}" is not verified in Brevo. Verify this sender in Brevo Dashboard -> Senders & IP -> Senders.`;
+        } else if (cleanMsg.startsWith('Status code:')) {
+          try {
+            const match = cleanMsg.match(/\{[\s\S]*\}/);
+            if (match) {
+              const parsed = JSON.parse(match[0]);
+              cleanMsg = parsed.message || cleanMsg;
+            }
+          } catch {
+            // keep original
           }
-        } catch {
-          // keep original
         }
       }
 
-      console.error(`[Brevo Notification Failed] Status ${statusCode}: ${cleanMsg}`);
+      console.error(`[Brevo Diagnostic] HTTP Status code: ${statusCode}`);
+      console.error(`[Brevo Diagnostic] Email rejected / failed by Brevo: ${cleanMsg}`);
 
       return {
         sent: false,
+        statusCode,
         error: cleanMsg
       };
     }
