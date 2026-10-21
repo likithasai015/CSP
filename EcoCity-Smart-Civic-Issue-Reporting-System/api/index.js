@@ -5,9 +5,42 @@ import cors from "cors";
 import path3 from "path";
 import fs3 from "fs";
 import os2 from "os";
+import mongoose4 from "mongoose";
+
+// server/config/db.ts
+import mongoose from "mongoose";
+import dotenv from "dotenv";
+dotenv.config();
+var connectDB = async () => {
+  const uri = process.env.MONGO_URI;
+  if (!uri) {
+    throw new Error("MONGO_URI environment variable is missing");
+  }
+  try {
+    await mongoose.connect(uri, {
+      serverSelectionTimeoutMS: 1e4
+    });
+    console.log("MongoDB connected successfully");
+    console.log(`Database: ${mongoose.connection.name}`);
+  } catch (error) {
+    if (error instanceof Error) {
+      console.error("MongoDB connection failed:", {
+        name: error.name,
+        message: error.message
+      });
+    } else {
+      console.error("MongoDB connection failed with an unknown error");
+    }
+    throw error;
+  }
+};
+var db_default = connectDB;
 
 // server/routes/reportRoutes.ts
 import { Router } from "express";
+
+// server/controllers/reportController.ts
+import mongoose3 from "mongoose";
 
 // server/services/storageService.ts
 import path from "path";
@@ -86,7 +119,7 @@ var storageService_default = StorageService;
 // server/services/brevoService.ts
 import { BrevoClient } from "@getbrevo/brevo";
 import axios from "axios";
-import dotenv from "dotenv";
+import dotenv2 from "dotenv";
 function escapeHtml(str) {
   if (!str) return "";
   return String(str).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#039;");
@@ -393,7 +426,7 @@ var BrevoService = class {
    * Recipient: likithamindi024@gmail.com
    */
   static async sendComplaintNotification(report) {
-    dotenv.config({ override: true });
+    dotenv2.config({ override: true });
     const apiKey = process.env.BREVO_API_KEY?.trim();
     const adminEmail = (process.env.ADMIN_NOTIFICATION_EMAIL || process.env.ADMIN_EMAIL || "likithamindi024@gmail.com").trim();
     const senderEmail = (process.env.BREVO_SENDER_EMAIL || "likithamindi024@gmail.com").trim();
@@ -495,6 +528,639 @@ var BrevoService = class {
   }
 };
 var brevoService_default = BrevoService;
+
+// server/models/Report.ts
+import mongoose2, { Schema } from "mongoose";
+var ReportSchema = new Schema(
+  {
+    complaintId: { type: String, required: true, unique: true },
+    name: { type: String, required: true },
+    email: { type: String, required: true, lowercase: true },
+    locationName: { type: String, required: true },
+    latitude: Number,
+    longitude: Number,
+    description: { type: String, default: "" },
+    title: { type: String, required: true },
+    category: { type: String, default: "Garbage" },
+    department: { type: String, required: true },
+    contact: String,
+    photoUrl: { type: String, required: true },
+    photoPublicId: String,
+    status: {
+      type: String,
+      enum: ["Pending", "In Progress", "Resolved", "Rejected"],
+      default: "Pending"
+    },
+    priority: {
+      type: String,
+      enum: ["Low", "Medium", "High", "Critical"],
+      default: "Medium"
+    },
+    assignedDepartment: String,
+    resolutionNotes: String,
+    resolutionImage: String,
+    emailNotification: {
+      sent: { type: Boolean, default: false },
+      messageId: String,
+      error: String,
+      attemptedAt: Date
+    },
+    location: String,
+    img: String,
+    user: String,
+    userEmail: String,
+    date: String
+  },
+  { timestamps: true }
+);
+var Report = mongoose2.models.Report || mongoose2.model("Report", ReportSchema);
+var Report_default = Report;
+
+// server/controllers/reportController.ts
+var ReportModel = Report_default;
+var allowedStatuses = ["Pending", "In Progress", "Resolved", "Rejected"];
+var allowedPriorities = ["Low", "Medium", "High", "Critical"];
+function toReportResponse(doc) {
+  const report = typeof doc.toObject === "function" ? doc.toObject() : { ...doc };
+  const id = String(report._id ?? report.id ?? report.complaintId);
+  return {
+    ...report,
+    _id: id,
+    id: report.id || id,
+    location: report.location || report.locationName,
+    img: report.img || report.photoUrl,
+    user: report.user || report.name,
+    userEmail: report.userEmail || report.email,
+    date: report.date || report.createdAt,
+    emailNotification: report.emailNotification || { sent: false }
+  };
+}
+function toBrevoReport(report) {
+  return {
+    ...report,
+    _id: String(report._id),
+    id: report.id || String(report._id),
+    complaintId: report.complaintId,
+    name: report.name,
+    email: report.email,
+    locationName: report.locationName,
+    description: report.description || "",
+    title: report.title,
+    category: report.category,
+    department: report.department,
+    photoUrl: report.photoUrl,
+    status: report.status,
+    priority: report.priority,
+    emailNotification: report.emailNotification || { sent: false },
+    createdAt: report.createdAt || /* @__PURE__ */ new Date(),
+    updatedAt: report.updatedAt || /* @__PURE__ */ new Date()
+  };
+}
+async function findReport(id) {
+  if (mongoose3.isValidObjectId(id)) {
+    const byMongoId = await ReportModel.findById(id).exec();
+    if (byMongoId) return byMongoId;
+  }
+  return ReportModel.findOne({
+    $or: [{ id }, { complaintId: id }]
+  }).exec();
+}
+var ReportController = class {
+  /**
+   * Submit a report and save it permanently in MongoDB.
+   * POST /api/reports
+   */
+  static async submitReport(req, res, next) {
+    try {
+      const {
+        name,
+        email,
+        locationName,
+        latitude,
+        longitude,
+        description,
+        title,
+        category,
+        contact
+      } = req.body;
+      const citizenName = typeof name === "string" && name.trim() ? name.trim() : "Citizen Reporter";
+      const citizenEmail = typeof email === "string" ? email.trim().toLowerCase() : "";
+      if (!citizenEmail) {
+        res.status(400).json({
+          success: false,
+          message: "Citizen email is required"
+        });
+        return;
+      }
+      if (!/^\S+@\S+\.\S+$/.test(citizenEmail)) {
+        res.status(400).json({
+          success: false,
+          message: "Please provide a valid email address"
+        });
+        return;
+      }
+      if (typeof locationName !== "string" || !locationName.trim()) {
+        res.status(400).json({
+          success: false,
+          message: "Location name is required"
+        });
+        return;
+      }
+      if (!req.file) {
+        res.status(400).json({
+          success: false,
+          message: "A photo of the civic issue is required"
+        });
+        return;
+      }
+      const parseCoordinate = (value, min, max) => {
+        if (value === void 0 || value === null || value === "") {
+          return void 0;
+        }
+        const number = Number(value);
+        return Number.isFinite(number) && number >= min && number <= max ? number : void 0;
+      };
+      const reportCategory = typeof category === "string" && category.trim() ? category.trim() : "Garbage";
+      const departmentMap = {
+        Garbage: "Sanitation Department",
+        Potholes: "Public Works Department",
+        "Broken Streetlights": "Electrical Department",
+        "Water Leakage": "Water Department",
+        Drainage: "Sewer Department",
+        "Stray Animal Issues": "Animal Control Department",
+        "Illegal Tree Cutting": "Parks & Forestry Department",
+        Pollution: "Environmental Protection Department"
+      };
+      const department = departmentMap[reportCategory] || "General Municipal Administration";
+      const upload = await storageService_default.processUploadedFile(
+        req.file,
+        req.get("host"),
+        req.protocol
+      );
+      const now = /* @__PURE__ */ new Date();
+      const complaintId = `ECO-${Date.now()}-${Math.floor(1e3 + Math.random() * 9e3)}`;
+      const created = await ReportModel.create({
+        complaintId,
+        id: complaintId,
+        name: citizenName,
+        email: citizenEmail,
+        locationName: locationName.trim(),
+        latitude: parseCoordinate(latitude, -90, 90),
+        longitude: parseCoordinate(longitude, -180, 180),
+        description: typeof description === "string" ? description.trim() : "",
+        title: typeof title === "string" && title.trim() ? title.trim() : `${reportCategory} Issue at ${locationName.trim()}`,
+        category: reportCategory,
+        department,
+        assignedDepartment: department,
+        contact: typeof contact === "string" && contact.trim() ? contact.trim() : void 0,
+        photoUrl: upload.url,
+        photoPublicId: upload.publicId,
+        status: "Pending",
+        priority: "Medium",
+        emailNotification: { sent: false },
+        location: locationName.trim(),
+        img: upload.url,
+        user: citizenName,
+        userEmail: citizenEmail,
+        date: now.toISOString()
+      });
+      let emailNotification;
+      try {
+        const emailResult = await brevoService_default.sendComplaintNotification(toBrevoReport(created));
+        emailNotification = {
+          sent: emailResult.sent,
+          messageId: emailResult.messageId,
+          error: emailResult.error,
+          attemptedAt: /* @__PURE__ */ new Date()
+        };
+      } catch (emailError) {
+        emailNotification = {
+          sent: false,
+          error: emailError instanceof Error ? emailError.message : "Email notification failed",
+          attemptedAt: /* @__PURE__ */ new Date()
+        };
+      }
+      created.emailNotification = emailNotification;
+      await created.save();
+      res.status(201).json({
+        success: true,
+        message: emailNotification.sent ? "Report saved to MongoDB and email notification accepted by Brevo" : "Report saved to MongoDB, but the email notification could not be sent",
+        data: toReportResponse(created),
+        emailNotification
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Get reports for the authenticated administrator.
+   * GET /api/reports
+   */
+  static async getAllReports(req, res, next) {
+    try {
+      const status = typeof req.query.status === "string" ? req.query.status : void 0;
+      const category = typeof req.query.category === "string" ? req.query.category : void 0;
+      const search = typeof req.query.search === "string" ? req.query.search.trim() : "";
+      const page = Math.max(
+        1,
+        Number.parseInt(String(req.query.page || "1"), 10) || 1
+      );
+      const limit = Math.max(
+        1,
+        Math.min(
+          100,
+          Number.parseInt(String(req.query.limit || "20"), 10) || 20
+        )
+      );
+      const filter = {};
+      if (status && status !== "all") {
+        filter.status = status;
+      }
+      if (category && category !== "all") {
+        filter.category = category;
+      }
+      if (search) {
+        const escaped = search.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(escaped, "i");
+        filter.$or = [
+          { complaintId: regex },
+          { name: regex },
+          { email: regex },
+          { locationName: regex },
+          { title: regex },
+          { category: regex },
+          { department: regex },
+          { description: regex }
+        ];
+      }
+      const sortOrder = req.query.sort === "oldest" ? 1 : -1;
+      const [documents, total] = await Promise.all([
+        ReportModel.find(filter).sort({ createdAt: sortOrder }).skip((page - 1) * limit).limit(limit).lean().exec(),
+        ReportModel.countDocuments(filter).exec()
+      ]);
+      res.status(200).json({
+        success: true,
+        data: documents.map(toReportResponse),
+        pagination: {
+          total,
+          page,
+          limit,
+          pages: Math.ceil(total / limit)
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Get the latest public reports without exposing citizen contact details.
+   * GET /api/reports/public/recent
+   */
+  static async getPublicRecentReports(_req, res, next) {
+    try {
+      const reports = await ReportModel.find().sort({ createdAt: -1 }).limit(10).lean().exec();
+      const safeReports = reports.map((report) => {
+        const result = toReportResponse(report);
+        delete result.email;
+        delete result.contact;
+        delete result.userEmail;
+        return result;
+      });
+      res.status(200).json({
+        success: true,
+        data: safeReports
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Retrieve one report by MongoDB ID or complaint ID.
+   * GET /api/reports/:id
+   */
+  static async getReportById(req, res, next) {
+    try {
+      const report = await findReport(req.params.id);
+      if (!report) {
+        res.status(404).json({
+          success: false,
+          message: `Civic issue report not found with ID ${req.params.id}`
+        });
+        return;
+      }
+      res.status(200).json({
+        success: true,
+        data: toReportResponse(report)
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Update report status and administrator-managed fields.
+   * PATCH /api/reports/:id/status
+   */
+  static async updateReportStatus(req, res, next) {
+    try {
+      const {
+        status,
+        notes,
+        assignedDepartment,
+        priority,
+        resolutionImage
+      } = req.body;
+      const updates = {};
+      if (status !== void 0) {
+        if (!allowedStatuses.includes(status)) {
+          res.status(400).json({
+            success: false,
+            message: `Invalid status. Allowed values: ${allowedStatuses.join(", ")}`
+          });
+          return;
+        }
+        updates.status = status;
+      }
+      if (assignedDepartment !== void 0) {
+        updates.assignedDepartment = assignedDepartment;
+      }
+      if (notes !== void 0) {
+        updates.resolutionNotes = notes;
+      }
+      if (resolutionImage !== void 0) {
+        updates.resolutionImage = resolutionImage;
+      }
+      if (priority !== void 0) {
+        if (!allowedPriorities.includes(priority)) {
+          res.status(400).json({
+            success: false,
+            message: `Invalid priority. Allowed values: ${allowedPriorities.join(", ")}`
+          });
+          return;
+        }
+        updates.priority = priority;
+      }
+      if (Object.keys(updates).length === 0) {
+        res.status(400).json({
+          success: false,
+          message: "No valid report fields supplied for update"
+        });
+        return;
+      }
+      const report = await findReport(req.params.id);
+      if (!report) {
+        res.status(404).json({
+          success: false,
+          message: `Civic issue report not found with ID ${req.params.id}`
+        });
+        return;
+      }
+      Object.assign(report, updates);
+      await report.save();
+      res.status(200).json({
+        success: true,
+        message: "Report updated successfully",
+        data: toReportResponse(report)
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Retry the administrator email notification.
+   * POST /api/reports/:id/resend-email
+   */
+  static async resendNotification(req, res, next) {
+    try {
+      const report = await findReport(req.params.id);
+      if (!report) {
+        res.status(404).json({
+          success: false,
+          message: `Civic issue report not found with ID ${req.params.id}`
+        });
+        return;
+      }
+      const emailResult = await brevoService_default.sendComplaintNotification(toBrevoReport(report));
+      report.emailNotification = {
+        sent: emailResult.sent,
+        messageId: emailResult.messageId,
+        error: emailResult.error,
+        attemptedAt: /* @__PURE__ */ new Date()
+      };
+      await report.save();
+      res.status(200).json({
+        success: true,
+        message: emailResult.sent ? "Email notification resent successfully" : "Email sending failed",
+        emailNotification: report.emailNotification
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+  /**
+   * Return statistics calculated from MongoDB.
+   * GET /api/reports/stats
+   */
+  static async getStats(_req, res, next) {
+    try {
+      const [total, pending, inProgress, resolved, rejected] = await Promise.all([
+        ReportModel.countDocuments().exec(),
+        ReportModel.countDocuments({ status: "Pending" }).exec(),
+        ReportModel.countDocuments({ status: "In Progress" }).exec(),
+        ReportModel.countDocuments({ status: "Resolved" }).exec(),
+        ReportModel.countDocuments({ status: "Rejected" }).exec()
+      ]);
+      res.status(200).json({
+        success: true,
+        data: {
+          total,
+          pending,
+          inProgress,
+          resolved,
+          rejected
+        }
+      });
+    } catch (error) {
+      next(error);
+    }
+  }
+};
+var reportController_default = ReportController;
+
+// server/middleware/upload.ts
+import multer from "multer";
+import path2 from "path";
+import fs2 from "fs";
+import os from "os";
+import crypto from "crypto";
+var isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+var uploadDir = isServerless ? path2.join(os.tmpdir(), "ecocity-uploads") : path2.resolve(process.cwd(), "uploads");
+try {
+  if (!fs2.existsSync(uploadDir)) {
+    fs2.mkdirSync(uploadDir, { recursive: true });
+  }
+} catch (err) {
+  console.warn(`[Uploads Directory Warning] Could not create directory ${uploadDir}: ${err.message}`);
+}
+var storage = multer.diskStorage({
+  destination: (_req, _file, cb) => {
+    cb(null, uploadDir);
+  },
+  filename: (_req, file, cb) => {
+    const ext = path2.extname(file.originalname).toLowerCase();
+    const safeRandom = crypto.randomBytes(8).toString("hex");
+    const timestamp = Date.now();
+    cb(null, `report-${timestamp}-${safeRandom}${ext}`);
+  }
+});
+var fileFilter = (_req, file, cb) => {
+  const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
+  const ext = path2.extname(file.originalname).toLowerCase();
+  const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
+  if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
+    cb(null, true);
+  } else {
+    cb(new Error("Invalid file type. Only JPEG, PNG, and WebP images are allowed."));
+  }
+};
+var uploadReportPhoto = multer({
+  storage,
+  limits: {
+    fileSize: 5 * 1024 * 1024
+    // 5 MB
+  },
+  fileFilter
+}).single("photo");
+
+// server/middleware/auth.ts
+import jwt from "jsonwebtoken";
+var requireAdmin = (req, res, next) => {
+  try {
+    const authHeader = req.headers.authorization;
+    const adminApiKey = req.headers["x-admin-key"];
+    const configuredApiKey = process.env.ADMIN_API_KEY;
+    if (configuredApiKey && configuredApiKey.trim() !== "" && adminApiKey && adminApiKey === configuredApiKey.trim()) {
+      req.user = {
+        id: "api-key-admin",
+        email: process.env.ADMIN_EMAIL || "admin@ecocity.org",
+        role: "admin"
+      };
+      return next();
+    }
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      res.status(401).json({
+        success: false,
+        message: "Access denied: Authorization token required for administrative endpoints"
+      });
+      return;
+    }
+    const token = authHeader.split(" ")[1];
+    if (!token) {
+      res.status(401).json({
+        success: false,
+        message: "Access denied: Malformed authorization header"
+      });
+      return;
+    }
+    const jwtSecret = process.env.JWT_SECRET || "ecocity-default-jwt-secret-key-change-in-production";
+    const decoded = jwt.verify(token, jwtSecret);
+    if (decoded.role !== "admin") {
+      res.status(403).json({
+        success: false,
+        message: "Forbidden: Administrator privileges required"
+      });
+      return;
+    }
+    req.user = decoded;
+    next();
+  } catch (error) {
+    if (error.name === "TokenExpiredError") {
+      res.status(401).json({
+        success: false,
+        message: "Session expired. Please log in again."
+      });
+      return;
+    }
+    res.status(401).json({
+      success: false,
+      message: "Invalid authorization token"
+    });
+  }
+};
+
+// server/middleware/rateLimiter.ts
+import rateLimit from "express-rate-limit";
+var getClientIp = (req) => {
+  const forwarded = req.headers?.["x-forwarded-for"];
+  if (typeof forwarded === "string") {
+    return forwarded.split(",")[0].trim();
+  }
+  if (Array.isArray(forwarded) && forwarded.length > 0) {
+    return forwarded[0].trim();
+  }
+  return req.headers?.["x-real-ip"] || req.ip || req.socket?.remoteAddress || "127.0.0.1";
+};
+var submissionLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  // 15 minutes
+  max: 30,
+  // Limit each IP to 30 submissions per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => getClientIp(req),
+  validate: { xForwardedForHeader: false, trustProxy: false },
+  message: {
+    success: false,
+    message: "Too many reports submitted from this IP address. Please wait 15 minutes before submitting again."
+  }
+});
+var authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  // 15 minutes
+  max: 15,
+  // Limit each IP to 15 login attempts per window
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => getClientIp(req),
+  validate: { xForwardedForHeader: false, trustProxy: false },
+  message: {
+    success: false,
+    message: "Too many login attempts. Please try again after 15 minutes."
+  }
+});
+var apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1e3,
+  max: 300,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => getClientIp(req),
+  validate: { xForwardedForHeader: false, trustProxy: false }
+});
+
+// server/routes/reportRoutes.ts
+var router = Router();
+router.post("/", submissionLimiter, uploadReportPhoto, reportController_default.submitReport);
+router.get("/public/recent", reportController_default.getPublicRecentReports);
+router.get("/stats", requireAdmin, reportController_default.getStats);
+router.get("/", requireAdmin, reportController_default.getAllReports);
+router.get("/:id", reportController_default.getReportById);
+router.patch("/:id/status", requireAdmin, reportController_default.updateReportStatus);
+router.post("/:id/resend-email", requireAdmin, reportController_default.resendNotification);
+router.patch("/:id/department", requireAdmin, (req, res, next) => {
+  req.body.assignedDepartment = req.body.assignedDepartment || req.body.department;
+  req.body.status = req.body.status || "In Progress";
+  reportController_default.updateReportStatus(req, res, next);
+});
+router.patch("/:id/priority", requireAdmin, (req, res, next) => {
+  req.body.status = req.body.status || "In Progress";
+  reportController_default.updateReportStatus(req, res, next);
+});
+var reportRoutes_default = router;
+
+// server/routes/authRoutes.ts
+import { Router as Router2 } from "express";
+
+// server/controllers/authController.ts
+import jwt2 from "jsonwebtoken";
 
 // server/services/mockDataService.ts
 var MockDataService = class {
@@ -795,486 +1461,7 @@ var MockDataService = class {
 var mockDataService = new MockDataService();
 var mockDataService_default = mockDataService;
 
-// server/controllers/reportController.ts
-var ReportController = class {
-  /**
-   * Submit a new civic issue report
-   * POST /api/reports
-   */
-  static async submitReport(req, res, next) {
-    try {
-      const {
-        name,
-        email,
-        locationName,
-        latitude,
-        longitude,
-        description,
-        title,
-        category,
-        contact
-      } = req.body;
-      const citizenName = name && typeof name === "string" && name.trim() !== "" ? name.trim() : "Citizen Reporter";
-      if (!email || typeof email !== "string" || email.trim() === "") {
-        res.status(400).json({
-          success: false,
-          message: "Citizen email is required"
-        });
-        return;
-      }
-      const emailRegex = /^\S+@\S+\.\S+$/;
-      if (!emailRegex.test(email.trim())) {
-        res.status(400).json({
-          success: false,
-          message: "Please provide a valid email address"
-        });
-        return;
-      }
-      if (!locationName || typeof locationName !== "string" || locationName.trim() === "") {
-        res.status(400).json({
-          success: false,
-          message: "Location name is required"
-        });
-        return;
-      }
-      if (!req.file) {
-        res.status(400).json({
-          success: false,
-          message: "A photo of the civic issue is required"
-        });
-        return;
-      }
-      let parsedLat;
-      let parsedLng;
-      if (latitude !== void 0 && latitude !== null && latitude !== "") {
-        const numLat = parseFloat(latitude);
-        if (!isNaN(numLat) && numLat >= -90 && numLat <= 90) {
-          parsedLat = numLat;
-        }
-      }
-      if (longitude !== void 0 && longitude !== null && longitude !== "") {
-        const numLng = parseFloat(longitude);
-        if (!isNaN(numLng) && numLng >= -180 && numLng <= 180) {
-          parsedLng = numLng;
-        }
-      }
-      const uploadResult = await storageService_default.processUploadedFile(
-        req.file,
-        req.get("host"),
-        req.protocol
-      );
-      const reportCategory = category && category.trim() || "Garbage";
-      const getDepartmentByCategory = (cat) => {
-        switch (cat) {
-          case "Garbage":
-            return "Sanitation Department";
-          case "Potholes":
-            return "Public Works Department";
-          case "Broken Streetlights":
-            return "Electrical Department";
-          case "Water Leakage":
-            return "Water Department";
-          case "Drainage":
-            return "Sewer Department";
-          case "Stray Animal Issues":
-            return "Animal Control Department";
-          case "Illegal Tree Cutting":
-            return "Parks & Forestry Department";
-          case "Pollution":
-            return "Environmental Protection Department";
-          default:
-            return "General Municipal Administration";
-        }
-      };
-      const department = getDepartmentByCategory(reportCategory);
-      const reportTitle = title && title.trim() || `${reportCategory} Issue at ${locationName.trim()}`;
-      const savedReport = mockDataService_default.createReport({
-        name: citizenName,
-        email: email.trim().toLowerCase(),
-        locationName: locationName.trim(),
-        latitude: parsedLat,
-        longitude: parsedLng,
-        description: description ? description.trim() : "",
-        title: reportTitle,
-        category: reportCategory,
-        department,
-        assignedDepartment: department,
-        contact: contact ? contact.trim() : void 0,
-        photoUrl: uploadResult.url,
-        photoPublicId: uploadResult.publicId,
-        status: "Pending",
-        priority: "Medium"
-      });
-      console.log(`[Report Created] ID: ${savedReport.complaintId} (Mock ID: ${savedReport._id})`);
-      const brevoResult = await brevoService_default.sendComplaintNotification(savedReport);
-      mockDataService_default.updateEmailNotification(savedReport._id, {
-        sent: brevoResult.sent,
-        messageId: brevoResult.messageId,
-        error: brevoResult.error,
-        attemptedAt: /* @__PURE__ */ new Date()
-      });
-      savedReport.emailNotification = {
-        sent: brevoResult.sent,
-        messageId: brevoResult.messageId,
-        error: brevoResult.error,
-        attemptedAt: /* @__PURE__ */ new Date()
-      };
-      const statusMessage = brevoResult.sent ? "Civic issue report submitted and email notification accepted by Brevo for delivery to administrator" : `Civic issue report recorded in EcoCity system, but Brevo email delivery could not be initiated: ${brevoResult.error}`;
-      res.status(201).json({
-        success: true,
-        message: statusMessage,
-        data: savedReport,
-        emailNotification: {
-          sent: brevoResult.sent,
-          messageId: brevoResult.messageId,
-          error: brevoResult.error
-        }
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Retrieve civic reports for an authorized administrator
-   * GET /api/reports
-   */
-  static async getAllReports(req, res, next) {
-    try {
-      const {
-        status,
-        category,
-        search,
-        page = "1",
-        limit = "20",
-        sort = "latest"
-      } = req.query;
-      const pageNum = Math.max(1, parseInt(page, 10) || 1);
-      const limitNum = Math.max(1, Math.min(100, parseInt(limit, 10) || 20));
-      const result = mockDataService_default.getAllReports({
-        status,
-        category,
-        search,
-        page: pageNum,
-        limit: limitNum,
-        sort
-      });
-      res.status(200).json({
-        success: true,
-        data: result.reports,
-        pagination: {
-          total: result.total,
-          page: result.page,
-          limit: result.limit,
-          pages: result.pages
-        }
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Public endpoint to get recent reports (sanitized citizen details)
-   * GET /api/reports/public/recent
-   */
-  static async getPublicRecentReports(_req, res, next) {
-    try {
-      const reports = mockDataService_default.getPublicRecentReports(10);
-      res.status(200).json({
-        success: true,
-        data: reports
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Retrieve a specific report by ID or Complaint ID
-   * GET /api/reports/:id
-   */
-  static async getReportById(req, res, next) {
-    try {
-      const { id } = req.params;
-      const report = mockDataService_default.getReportById(id);
-      if (!report) {
-        res.status(404).json({
-          success: false,
-          message: `Civic issue report not found with ID ${id}`
-        });
-        return;
-      }
-      res.status(200).json({
-        success: true,
-        data: report
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Update a report's status (Administrator only)
-   * PATCH /api/reports/:id/status
-   */
-  static async updateReportStatus(req, res, next) {
-    try {
-      const { id } = req.params;
-      const { status, notes, assignedDepartment, priority, resolutionImage } = req.body;
-      const allowedStatuses = ["Pending", "In Progress", "Resolved", "Rejected"];
-      if (!status || !allowedStatuses.includes(status)) {
-        res.status(400).json({
-          success: false,
-          message: `Invalid status. Allowed values are: ${allowedStatuses.join(", ")}`
-        });
-        return;
-      }
-      const updatedReport = mockDataService_default.updateReportStatus(id, {
-        status,
-        notes,
-        assignedDepartment,
-        priority,
-        resolutionImage
-      });
-      if (!updatedReport) {
-        res.status(404).json({
-          success: false,
-          message: `Civic issue report not found with ID ${id}`
-        });
-        return;
-      }
-      res.status(200).json({
-        success: true,
-        message: `Report status successfully updated to ${status}`,
-        data: updatedReport
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Resend Brevo email notification for a report (Admin only)
-   * POST /api/reports/:id/resend-email
-   */
-  static async resendNotification(req, res, next) {
-    try {
-      const { id } = req.params;
-      const report = mockDataService_default.getReportById(id);
-      if (!report) {
-        res.status(404).json({
-          success: false,
-          message: `Civic issue report not found with ID ${id}`
-        });
-        return;
-      }
-      const brevoResult = await brevoService_default.sendComplaintNotification(report);
-      mockDataService_default.updateEmailNotification(report._id, {
-        sent: brevoResult.sent,
-        messageId: brevoResult.messageId,
-        error: brevoResult.error,
-        attemptedAt: /* @__PURE__ */ new Date()
-      });
-      report.emailNotification = {
-        sent: brevoResult.sent,
-        messageId: brevoResult.messageId,
-        error: brevoResult.error,
-        attemptedAt: /* @__PURE__ */ new Date()
-      };
-      res.status(200).json({
-        success: true,
-        message: brevoResult.sent ? "Email notification resent successfully" : "Email sending failed",
-        emailNotification: report.emailNotification
-      });
-    } catch (error) {
-      next(error);
-    }
-  }
-  /**
-   * Summary stats endpoint (convenience for admin dashboard)
-   * GET /api/reports/stats
-   */
-  static async getStats(_req, res) {
-    const stats = mockDataService_default.getStats();
-    res.status(200).json({
-      success: true,
-      data: stats
-    });
-  }
-};
-var reportController_default = ReportController;
-
-// server/middleware/upload.ts
-import multer from "multer";
-import path2 from "path";
-import fs2 from "fs";
-import os from "os";
-import crypto from "crypto";
-var isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
-var uploadDir = isServerless ? path2.join(os.tmpdir(), "ecocity-uploads") : path2.resolve(process.cwd(), "uploads");
-try {
-  if (!fs2.existsSync(uploadDir)) {
-    fs2.mkdirSync(uploadDir, { recursive: true });
-  }
-} catch (err) {
-  console.warn(`[Uploads Directory Warning] Could not create directory ${uploadDir}: ${err.message}`);
-}
-var storage = multer.diskStorage({
-  destination: (_req, _file, cb) => {
-    cb(null, uploadDir);
-  },
-  filename: (_req, file, cb) => {
-    const ext = path2.extname(file.originalname).toLowerCase();
-    const safeRandom = crypto.randomBytes(8).toString("hex");
-    const timestamp = Date.now();
-    cb(null, `report-${timestamp}-${safeRandom}${ext}`);
-  }
-});
-var fileFilter = (_req, file, cb) => {
-  const allowedMimeTypes = ["image/jpeg", "image/jpg", "image/png", "image/webp"];
-  const ext = path2.extname(file.originalname).toLowerCase();
-  const allowedExtensions = [".jpg", ".jpeg", ".png", ".webp"];
-  if (allowedMimeTypes.includes(file.mimetype) && allowedExtensions.includes(ext)) {
-    cb(null, true);
-  } else {
-    cb(new Error("Invalid file type. Only JPEG, PNG, and WebP images are allowed."));
-  }
-};
-var uploadReportPhoto = multer({
-  storage,
-  limits: {
-    fileSize: 5 * 1024 * 1024
-    // 5 MB
-  },
-  fileFilter
-}).single("photo");
-
-// server/middleware/auth.ts
-import jwt from "jsonwebtoken";
-var requireAdmin = (req, res, next) => {
-  try {
-    const authHeader = req.headers.authorization;
-    const adminApiKey = req.headers["x-admin-key"];
-    const configuredApiKey = process.env.ADMIN_API_KEY;
-    if (configuredApiKey && configuredApiKey.trim() !== "" && adminApiKey && adminApiKey === configuredApiKey.trim()) {
-      req.user = {
-        id: "api-key-admin",
-        email: process.env.ADMIN_EMAIL || "admin@ecocity.org",
-        role: "admin"
-      };
-      return next();
-    }
-    if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      res.status(401).json({
-        success: false,
-        message: "Access denied: Authorization token required for administrative endpoints"
-      });
-      return;
-    }
-    const token = authHeader.split(" ")[1];
-    if (!token) {
-      res.status(401).json({
-        success: false,
-        message: "Access denied: Malformed authorization header"
-      });
-      return;
-    }
-    const jwtSecret = process.env.JWT_SECRET || "ecocity-default-jwt-secret-key-change-in-production";
-    const decoded = jwt.verify(token, jwtSecret);
-    if (decoded.role !== "admin") {
-      res.status(403).json({
-        success: false,
-        message: "Forbidden: Administrator privileges required"
-      });
-      return;
-    }
-    req.user = decoded;
-    next();
-  } catch (error) {
-    if (error.name === "TokenExpiredError") {
-      res.status(401).json({
-        success: false,
-        message: "Session expired. Please log in again."
-      });
-      return;
-    }
-    res.status(401).json({
-      success: false,
-      message: "Invalid authorization token"
-    });
-  }
-};
-
-// server/middleware/rateLimiter.ts
-import rateLimit from "express-rate-limit";
-var getClientIp = (req) => {
-  const forwarded = req.headers?.["x-forwarded-for"];
-  if (typeof forwarded === "string") {
-    return forwarded.split(",")[0].trim();
-  }
-  if (Array.isArray(forwarded) && forwarded.length > 0) {
-    return forwarded[0].trim();
-  }
-  return req.headers?.["x-real-ip"] || req.ip || req.socket?.remoteAddress || "127.0.0.1";
-};
-var submissionLimiter = rateLimit({
-  windowMs: 15 * 60 * 1e3,
-  // 15 minutes
-  max: 30,
-  // Limit each IP to 30 submissions per window
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => getClientIp(req),
-  validate: { xForwardedForHeader: false, trustProxy: false },
-  message: {
-    success: false,
-    message: "Too many reports submitted from this IP address. Please wait 15 minutes before submitting again."
-  }
-});
-var authLimiter = rateLimit({
-  windowMs: 15 * 60 * 1e3,
-  // 15 minutes
-  max: 15,
-  // Limit each IP to 15 login attempts per window
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => getClientIp(req),
-  validate: { xForwardedForHeader: false, trustProxy: false },
-  message: {
-    success: false,
-    message: "Too many login attempts. Please try again after 15 minutes."
-  }
-});
-var apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1e3,
-  max: 300,
-  standardHeaders: true,
-  legacyHeaders: false,
-  keyGenerator: (req) => getClientIp(req),
-  validate: { xForwardedForHeader: false, trustProxy: false }
-});
-
-// server/routes/reportRoutes.ts
-var router = Router();
-router.post("/", submissionLimiter, uploadReportPhoto, reportController_default.submitReport);
-router.get("/public/recent", reportController_default.getPublicRecentReports);
-router.get("/stats", requireAdmin, reportController_default.getStats);
-router.get("/", requireAdmin, reportController_default.getAllReports);
-router.get("/:id", reportController_default.getReportById);
-router.patch("/:id/status", requireAdmin, reportController_default.updateReportStatus);
-router.post("/:id/resend-email", requireAdmin, reportController_default.resendNotification);
-router.patch("/:id/department", requireAdmin, (req, res, next) => {
-  req.body.assignedDepartment = req.body.assignedDepartment || req.body.department;
-  req.body.status = req.body.status || "In Progress";
-  reportController_default.updateReportStatus(req, res, next);
-});
-router.patch("/:id/priority", requireAdmin, (req, res, next) => {
-  req.body.status = req.body.status || "In Progress";
-  reportController_default.updateReportStatus(req, res, next);
-});
-var reportRoutes_default = router;
-
-// server/routes/authRoutes.ts
-import { Router as Router2 } from "express";
-
 // server/controllers/authController.ts
-import jwt2 from "jsonwebtoken";
 var AuthController = class {
   /**
    * Administrator Login
@@ -1485,13 +1672,16 @@ app.use((req, _res, next) => {
   }
   next();
 });
-var isServerless2 = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+var isServerless2 = Boolean(
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+);
 var uploadDir2 = isServerless2 ? path3.join(os2.tmpdir(), "ecocity-uploads") : path3.resolve(process.cwd(), "uploads");
 try {
   if (!fs3.existsSync(uploadDir2)) {
     fs3.mkdirSync(uploadDir2, { recursive: true });
   }
-} catch {
+} catch (error) {
+  console.error("[Uploads] Could not create upload directory:", error);
 }
 var allowedOrigins = [
   "http://localhost:3000",
@@ -1514,11 +1704,16 @@ app.use(
         }
       } catch {
       }
-      return callback(null, false);
+      return callback(new Error("Origin not allowed by CORS"));
     },
     credentials: true,
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization", "X-Admin-Key", "Accept"]
+    allowedHeaders: [
+      "Content-Type",
+      "Authorization",
+      "X-Admin-Key",
+      "Accept"
+    ]
   })
 );
 app.use(express.json({ limit: "10mb" }));
@@ -1526,33 +1721,43 @@ app.use(express.urlencoded({ extended: true, limit: "10mb" }));
 app.use("/api", apiLimiter);
 app.use("/api/admin", adminAuth_default);
 app.use(["/uploads", "/api/uploads"], express.static(uploadDir2));
-app.get(["/uploads/:filename", "/api/uploads/:filename"], (req, res) => {
-  const filename = path3.basename(req.params.filename || "");
-  const candidateDirs = [
-    uploadDir2,
-    path3.resolve(process.cwd(), "uploads"),
-    path3.resolve(process.cwd(), "EcoCity-Smart-Civic-Issue-Reporting-System", "uploads")
-  ];
-  for (const dir of candidateDirs) {
-    const fullPath = path3.join(dir, filename);
-    if (fs3.existsSync(fullPath)) {
-      try {
-        const stats = fs3.statSync(fullPath);
-        if (stats.size > 100) {
-          return res.sendFile(fullPath);
+app.get(
+  ["/uploads/:filename", "/api/uploads/:filename"],
+  (req, res) => {
+    const filename = path3.basename(req.params.filename || "");
+    const candidateDirs = [
+      uploadDir2,
+      path3.resolve(process.cwd(), "uploads"),
+      path3.resolve(
+        process.cwd(),
+        "EcoCity-Smart-Civic-Issue-Reporting-System",
+        "uploads"
+      )
+    ];
+    for (const dir of candidateDirs) {
+      const fullPath = path3.join(dir, filename);
+      if (fs3.existsSync(fullPath)) {
+        try {
+          if (fs3.statSync(fullPath).size > 100) {
+            return res.sendFile(fullPath);
+          }
+        } catch {
         }
-      } catch {
       }
     }
+    return res.redirect(
+      "https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800"
+    );
   }
-  res.redirect("https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800");
-});
+);
 var healthHandler = (_req, res) => {
-  res.status(200).json({
-    status: "healthy",
+  const connected = mongoose4.connection.readyState === 1;
+  res.status(connected ? 200 : 503).json({
+    status: connected ? "healthy" : "unavailable",
+    database: connected ? "MongoDB connected" : "MongoDB disconnected",
+    databaseName: connected ? mongoose4.connection.name : null,
     timestamp: (/* @__PURE__ */ new Date()).toISOString(),
     uptime: process.uptime(),
-    database: "database-free (centralized in-memory mock-data service)",
     environment: process.env.NODE_ENV || (isServerless2 ? "production" : "development")
   });
 };
@@ -1562,7 +1767,7 @@ app.get(["/", "/api"], (_req, res) => {
     name: "EcoCity Smart Civic Issue Reporting System API",
     status: "online",
     version: "1.0.0",
-    mode: "database-free (in-memory mock data, resets on restart)",
+    mode: "MongoDB",
     endpoints: {
       health: "/api/health",
       reports: "/api/reports",
@@ -1598,24 +1803,28 @@ app.use("/api/*", (req, res) => {
 app.use(errorHandler_default);
 async function startServer() {
   try {
+    await db_default();
     const adminConfig = mockDataService_default.getAdminConfig();
     const server = app.listen(PORT, () => {
-      console.log(`
-==================================================`);
-      console.log(`  EcoCity Smart Civic Issue Reporting Backend`);
-      console.log(`  Mode: Database-Free (Centralized In-Memory Store)`);
-      console.log(`  Port: http://localhost:${PORT}`);
-      console.log(`  Health Check: http://localhost:${PORT}/api/health`);
-      console.log(`  Reports API:  http://localhost:${PORT}/api/reports`);
-      console.log(`  Admin Email:  ${adminConfig.email}`);
-      console.log(`  Brevo Email:  ${process.env.BREVO_API_KEY ? "Configured" : "Missing BREVO_API_KEY"}`);
-      console.log(`  Note: In-memory mock data resets when backend restarts.`);
-      console.log(`==================================================
-`);
+      console.log("\n==============================================");
+      console.log(" EcoCity Smart Civic Issue Reporting Backend");
+      console.log(" Mode: MongoDB");
+      console.log(` Database: ${mongoose4.connection.name}`);
+      console.log(` Port: http://localhost:${PORT}`);
+      console.log(` Health: http://localhost:${PORT}/api/health`);
+      console.log(` Reports: http://localhost:${PORT}/api/reports`);
+      console.log(` Admin Email: ${adminConfig.email}`);
+      console.log(
+        ` Brevo Email: ${process.env.BREVO_API_KEY ? "Configured" : "Missing BREVO_API_KEY"}`
+      );
+      console.log("==============================================\n");
     });
     return server;
   } catch (error) {
-    console.error(`[Server Start Error] Failed to start server: ${error.message}`);
+    console.error(
+      "[Server Start Error] MongoDB connection failed:",
+      error.message
+    );
     process.exit(1);
   }
 }
