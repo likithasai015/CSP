@@ -1,12 +1,21 @@
-/**
- * EcoCity Database Configuration
- * Database-free mode: MongoDB is not required.
- * System operates on a centralized in-memory mock-data service.
- */
 
-export const connectDB = async (): Promise<null> => {
-  console.log('[Database] Database-free mode active: Operating with centralized in-memory mock data (no MongoDB connection required).');
-  return null;
+import mongoose from 'mongoose';
+import dotenv from 'dotenv';
+
+dotenv.config();
+
+const connectDB = async (): Promise<void> => {
+  const uri = process.env.MONGO_URI;
+
+  if (!uri) {
+    throw new Error('MONGODB_URI is missing from the .env file');
+  }
+
+  await mongoose.connect(uri);
+
+  console.log('✅ MongoDB Connected Successfully!');
+  console.log(`Database: ${mongoose.connection.name}`);
 };
 
 export default connectDB;
+export { connectDB };

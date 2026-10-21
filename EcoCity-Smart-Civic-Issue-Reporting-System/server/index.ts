@@ -1,9 +1,13 @@
+
 import "dotenv/config";
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import path from 'path';
 import fs from 'fs';
 import os from 'os';
+import mongoose from 'mongoose';
+
+import connectDB from './config/db.js';
 import reportRoutes from './routes/reportRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import errorHandler from './middleware/errorHandler.js';
@@ -11,14 +15,12 @@ import { apiLimiter } from './middleware/rateLimiter.js';
 import adminAuthRouter from './adminAuth.js';
 import mockDataService from './services/mockDataService.js';
 
-
 const app = express();
 const PORT = process.env.PORT || 5000;
 
-// Enable reverse proxy trust for Vercel / Cloudflare / AWS Lambda
 app.set('trust proxy', 1);
 
-// Ensure req.socket and remoteAddress exist in serverless environments
+// Handle requests in serverless environments
 app.use((req: any, _res: any, next: any) => {
   if (!req.socket) {
     req.socket = { remoteAddress: '127.0.0.1' };
@@ -28,8 +30,11 @@ app.use((req: any, _res: any, next: any) => {
   next();
 });
 
-// Determine safe upload directory based on runtime environment (local vs. Vercel serverless)
-const isServerless = Boolean(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME);
+// Upload directory
+const isServerless = Boolean(
+  process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME
+);
+
 const uploadDir = isServerless
   ? path.join(os.tmpdir(), 'ecocity-uploads')
   : path.resolve(process.cwd(), 'uploads');
@@ -38,11 +43,11 @@ try {
   if (!fs.existsSync(uploadDir)) {
     fs.mkdirSync(uploadDir, { recursive: true });
   }
-} catch {
-  // Ignored in read-only environments
+} catch (error) {
+  console.error('[Uploads] Could not create upload directory:', error);
 }
 
-// 1. CORS Configuration
+// CORS
 const allowedOrigins = [
   'http://localhost:3000',
   'http://localhost:5173',
@@ -54,10 +59,8 @@ const allowedOrigins = [
 app.use(
   cors({
     origin: (origin, callback) => {
-      // Allow requests with no origin (e.g. mobile apps, curl, server-to-server)
       if (!origin) return callback(null, true);
 
-      // Check configured origins and local development
       if (
         allowedOrigins.includes(origin) ||
         origin.startsWith('http://localhost:') ||
@@ -66,70 +69,85 @@ app.use(
         return callback(null, true);
       }
 
-      // Automatically allow Vercel deployment domains (*.vercel.app)
       try {
         const originUrl = new URL(origin);
         if (originUrl.hostname.endsWith('.vercel.app')) {
           return callback(null, true);
         }
       } catch {
-        // invalid origin url, fallback to standard check
+        // Invalid origin
       }
 
-      return callback(null, false);
+      return callback(new Error('Origin not allowed by CORS'));
     },
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'X-Admin-Key', 'Accept']
+    allowedHeaders: [
+      'Content-Type',
+      'Authorization',
+      'X-Admin-Key',
+      'Accept'
+    ]
   })
 );
 
-// 2. Global Middleware
+// Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Apply general API rate limiter to all /api routes
 app.use('/api', apiLimiter);
-app.use("/api/admin", adminAuthRouter);
+app.use('/api/admin', adminAuthRouter);
 
-// 3. Static Files (Uploaded Photos - active for local development)
-// 3. Static & Dynamic Uploaded Photos (with durable fallback)
+// Uploaded photos
 app.use(['/uploads', '/api/uploads'], express.static(uploadDir));
 
-app.get(['/uploads/:filename', '/api/uploads/:filename'], (req: Request, res: Response) => {
-  const filename = path.basename(req.params.filename || '');
-  const candidateDirs = [
-    uploadDir,
-    path.resolve(process.cwd(), 'uploads'),
-    path.resolve(process.cwd(), 'EcoCity-Smart-Civic-Issue-Reporting-System', 'uploads')
-  ];
+app.get(
+  ['/uploads/:filename', '/api/uploads/:filename'],
+  (req: Request, res: Response) => {
+    const filename = path.basename(req.params.filename || '');
 
-  for (const dir of candidateDirs) {
-    const fullPath = path.join(dir, filename);
-    if (fs.existsSync(fullPath)) {
-      try {
-        const stats = fs.statSync(fullPath);
-        if (stats.size > 100) {
-          return res.sendFile(fullPath);
+    const candidateDirs = [
+      uploadDir,
+      path.resolve(process.cwd(), 'uploads'),
+      path.resolve(
+        process.cwd(),
+        'EcoCity-Smart-Civic-Issue-Reporting-System',
+        'uploads'
+      )
+    ];
+
+    for (const dir of candidateDirs) {
+      const fullPath = path.join(dir, filename);
+
+      if (fs.existsSync(fullPath)) {
+        try {
+          if (fs.statSync(fullPath).size > 100) {
+            return res.sendFile(fullPath);
+          }
+        } catch {
+          // Continue checking directories
         }
-      } catch {
-        // continue
       }
     }
+
+    return res.redirect(
+      'https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800'
+    );
   }
+);
 
-  // Redirect to reliable high-res fallback image if file is absent or dummy
-  res.redirect('https://images.unsplash.com/photo-1541888946425-d81bb19240f5?auto=format&fit=crop&q=80&w=800');
-});
-
-// 4. Root & Health Check Endpoints
+// Health check: report actual Mongoose connection state
 const healthHandler = (_req: Request, res: Response) => {
-  res.status(200).json({
-    status: 'healthy',
+  const connected = mongoose.connection.readyState === 1;
+
+  res.status(connected ? 200 : 503).json({
+    status: connected ? 'healthy' : 'unavailable',
+    database: connected ? 'MongoDB connected' : 'MongoDB disconnected',
+    databaseName: connected ? mongoose.connection.name : null,
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    database: 'database-free (centralized in-memory mock-data service)',
-    environment: process.env.NODE_ENV || (isServerless ? 'production' : 'development')
+    environment:
+      process.env.NODE_ENV || (isServerless ? 'production' : 'development')
   });
 };
 
@@ -140,7 +158,7 @@ app.get(['/', '/api'], (_req: Request, res: Response) => {
     name: 'EcoCity Smart Civic Issue Reporting System API',
     status: 'online',
     version: '1.0.0',
-    mode: 'database-free (in-memory mock data, resets on restart)',
+    mode: 'MongoDB',
     endpoints: {
       health: '/api/health',
       reports: '/api/reports',
@@ -149,13 +167,12 @@ app.get(['/', '/api'], (_req: Request, res: Response) => {
   });
 });
 
-// Fallback: If a POST request hits '/' or '/api' directly (due to reverse proxy or Vercel rewrite)
+// Fallback for POST requests
 app.post(['/', '/api'], (req: Request, res: Response, next: NextFunction) => {
   reportRoutes(req, res, next);
 });
 
-// 5. API Endpoints
-// Mount report routes across all standard prefixes to prevent path-mismatch 404s
+// Report routes
 app.use('/api/reports', reportRoutes);
 app.use('/api/v1/reports', reportRoutes);
 app.use('/reports', reportRoutes);
@@ -171,13 +188,13 @@ app.use('/api/v1/admin/complaints', reportRoutes);
 app.use('/admin/complaints', reportRoutes);
 app.use('/v1/admin/complaints', reportRoutes);
 
-// Mount authentication routes across all prefixes
+// Authentication routes
 app.use('/api/auth', authRoutes);
 app.use('/api/v1/auth', authRoutes);
 app.use('/auth', authRoutes);
 app.use('/v1/auth', authRoutes);
 
-// 6. 404 Handler for undefined API routes
+// 404 handler
 app.use('/api/*', (req: Request, res: Response) => {
   res.status(404).json({
     success: false,
@@ -185,45 +202,60 @@ app.use('/api/*', (req: Request, res: Response) => {
   });
 });
 
-// 7. Centralized Error Handling Middleware
+// Error handler
 app.use(errorHandler);
 
-// Start Server for local execution
+// Start server only after MongoDB connects
 export async function startServer() {
   try {
+    await connectDB();
+
     const adminConfig = mockDataService.getAdminConfig();
 
     const server = app.listen(PORT, () => {
-      console.log(`\n==================================================`);
-      console.log(`  EcoCity Smart Civic Issue Reporting Backend`);
-      console.log(`  Mode: Database-Free (Centralized In-Memory Store)`);
-      console.log(`  Port: http://localhost:${PORT}`);
-      console.log(`  Health Check: http://localhost:${PORT}/api/health`);
-      console.log(`  Reports API:  http://localhost:${PORT}/api/reports`);
-      console.log(`  Admin Email:  ${adminConfig.email}`);
-      console.log(`  Brevo Email:  ${process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY'}`);
-      console.log(`  Note: In-memory mock data resets when backend restarts.`);
-      console.log(`==================================================\n`);
+      console.log('\n==============================================');
+      console.log(' EcoCity Smart Civic Issue Reporting Backend');
+      console.log(' Mode: MongoDB');
+      console.log(` Database: ${mongoose.connection.name}`);
+      console.log(` Port: http://localhost:${PORT}`);
+      console.log(` Health: http://localhost:${PORT}/api/health`);
+      console.log(` Reports: http://localhost:${PORT}/api/reports`);
+      console.log(` Admin Email: ${adminConfig.email}`);
+      console.log(
+        ` Brevo Email: ${
+          process.env.BREVO_API_KEY ? 'Configured' : 'Missing BREVO_API_KEY'
+        }`
+      );
+      console.log('==============================================\n');
     });
 
     return server;
   } catch (error: any) {
-    console.error(`[Server Start Error] Failed to start server: ${error.message}`);
+    console.error(
+      '[Server Start Error] MongoDB connection failed:',
+      error.message
+    );
     process.exit(1);
   }
 }
 
-// Auto-start server ONLY when run directly from command line (e.g. `npm run server`)
-// Do NOT call app.listen() when executed in a serverless environment (Vercel)
+// Auto-start for direct local execution.
+// Serverless deployments need their own initialization strategy.
 const isDirectExecution = Boolean(
   process.argv[1] &&
-  (process.argv[1].endsWith(path.join('server', 'index.ts')) ||
-   process.argv[1].endsWith(path.join('server', 'index.js')) ||
-   process.argv[1].endsWith('index.ts') ||
-   process.argv[1].endsWith('index.js'))
+    (
+      process.argv[1].endsWith(path.join('server', 'index.ts')) ||
+      process.argv[1].endsWith(path.join('server', 'index.js')) ||
+      process.argv[1].endsWith('index.ts') ||
+      process.argv[1].endsWith('index.js')
+    )
 );
 
-if (isDirectExecution && process.env.NODE_ENV !== 'test' && !isServerless) {
+if (
+  isDirectExecution &&
+  process.env.NODE_ENV !== 'test' &&
+  !isServerless
+) {
   startServer();
 }
 
